@@ -2499,8 +2499,13 @@ function wireNet(){
   Net.handlers = {
     status(){
       const el2 = el('netstate');
-      const map = {offline:'Offline — playing against bots', connecting:'Connecting…',
-                   live:'Online', lost:'Connection lost — retrying'};
+      const n = Net.remote.size + 1;
+      const map = {
+        offline:   'Offline — playing against bots',
+        connecting:'Connecting…',
+        live:      'Online — ' + n + (n === 1 ? ' player in this lobby' : ' players in this lobby'),
+        lost:      'Connection lost — retrying'
+      };
       el2.textContent = map[Net.status] || Net.status;
       el2.className = 'netstate ' + Net.status;
     },
@@ -2561,7 +2566,7 @@ function wireNet(){
     },
     matchEnd(m){ endMatch(); },
     dropped(){ addFeed(null, null, false); },
-    roster(){ updateHUD(false); }
+    roster(){ updateHUD(false); if(Net.handlers.status) Net.handlers.status(); }
   };
 }
 function killLocal(){
@@ -3006,16 +3011,31 @@ function wireMenu(){
   el('sens2').oninput = e=>{ S.sens = e.target.value/100; el('sens2v').textContent = S.sens.toFixed(2); };
   el('fov').oninput = e=>{ S.fov = +e.target.value; el('fovv').textContent = S.fov; camera.fov=S.fov; camera.updateProjectionMatrix(); };
 
+  // keep the socket matched to whatever is typed in the name and room boxes
+  function ensureConnected(){
+    if(!Net.url()) return;
+    const nm = (el('pname').value || '').trim() || 'Player';
+    const rm = (el('proom').value || '').trim() || 'main';
+    if(Net.on && Net.name === nm && Net.room === rm){ Net.sendMode(MODE().key); return; }
+    Net.disconnect();
+    Net.connect({name:nm, room:rm, mode:MODE().key, cls:S.cls});
+  }
+  let reconnectTimer = 0;
+  const queueReconnect = ()=>{ clearTimeout(reconnectTimer); reconnectTimer = setTimeout(ensureConnected, 700); };
+  el('pname').oninput = queueReconnect;
+  el('proom').oninput = queueReconnect;
   el('play').onclick = ()=>{
     const nm = (el('pname').value || '').trim();
     const rm = (el('proom').value || '').trim();
     if(nm) localStorage_safe('verge.name', nm);
     if(rm) localStorage_safe('verge.room', rm);
-    if(Net.url()){
-      Net.connect({name:nm || 'Player', room:rm || 'main', mode:MODE().key, cls:S.cls});
-    }
+    ensureConnected();
     startMatch();
   };
+  // remember what you typed last time, then join the lobby right away
+  el('pname').value = localStorage_safe('verge.name') || '';
+  el('proom').value = localStorage_safe('verge.room') || '';
+  ensureConnected();
   el('resume').onclick = requestLock;
   el('quit').onclick = leaveMatch;
   el('again').onclick = startMatch;
