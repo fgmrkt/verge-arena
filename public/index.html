@@ -1019,11 +1019,17 @@ const player = {
 const keys = Object.create(null);
 let pointerLocked = false;
 
-function curW(){ return player.loadout[player.gun]; }
+const NO_WEAPON = {key:'', name:'—', mag:0, rpm:600, pellets:1, spread:0,
+                   moveMult:1, falloff:[10,20], recoil:0, kickY:0, adsFov:1,
+                   shape:'ak', dmg:0, auto:false, reload:1};
+// never undefined: the HUD and the crosshair both read this, and they can run
+// before the first spawn has picked a class
+function curW(){ return player.loadout[player.gun] || player.loadout[0] || NO_WEAPON; }
 function classAllowed(i){ return pickList().indexOf(i) >= 0; }
 function resetPlayerLoadout(){
   player.cls = classAllowed(S.cls) ? S.cls : pickList()[0];   // some modes bar some classes
-  player.loadout = CLASSES[player.cls].guns.map(k=>ARMS[k]);
+  player.loadout = CLASSES[player.cls].guns.map(k=>ARMS[k]).filter(Boolean);
+  if(!player.loadout.length) player.loadout = [ARMS[CLASSES[0].guns[0]], ARMS[CLASSES[0].guns[1]]];
   player.ammo = player.loadout.map(w=>w.mag);
   player.gun = 0; player.reloading = 0; player.nextShot = 0;
   selectGunModel(0);
@@ -2310,6 +2316,7 @@ const _last = {};
 function setText(id, v){ if(_last[id]!==v){ _last[id]=v; el(id).textContent = v; } }
 function setStyle(id, prop, v){ const k=id+prop; if(_last[k]!==v){ _last[k]=v; el(id).style[prop]=v; } }
 function updateHUD(full){
+  if(!player.loadout.length) return;      // nothing to show until a match starts
   const hp = Math.ceil(player.hp);
   setText('hp', hp);
   setStyle('hpfill','width', hp+'%');
@@ -2525,6 +2532,16 @@ function wireNet(){
       curMap = VergeWorld.pool(kind)[m.map % VergeWorld.pool(kind).length];
       buildWorld(curMap);
       clearBots();                      // drop the meshes too, not just the list
+      if(Array.isArray(m.roster)){
+        Net.remote.clear();
+        m.roster.forEach(r=>{
+          if(r.id === Net.id) return;
+          Net.remote.set(r.id, {id:r.id, name:r.name, cls:r.cls, bot:!!r.bot,
+            x:0, y:0, z:0, yaw:0, alive:r.alive !== false, hp:r.hp === undefined ? 100 : r.hp,
+            kills:r.kills||0, deaths:r.deaths||0, state:0,
+            px:0, py:0, pz:0, pyaw:0, t0:undefined, t1:0, avatar:null});
+        });
+      }
       Net.remote.forEach(r=>{ r.avatar = null; });
       spawnPlayer();
       buildSlots(); buildDeadPicker(); updateHUD(true);
