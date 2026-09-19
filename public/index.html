@@ -166,6 +166,12 @@
   #feed .chip{width:9px;height:20px;border-radius:2px;flex:none}
   @keyframes feedin{from{opacity:0;transform:translateX(14px)}to{opacity:1;transform:none}}
   #dmg{position:absolute;inset:0;opacity:0;box-shadow:inset 0 0 140px rgba(226,59,87,.85);transition:opacity .25s ease}
+  #oops{position:fixed;left:50%;top:1.1rem;transform:translateX(-50%);z-index:40;max-width:min(680px,92vw);
+    display:flex;flex-direction:column;gap:.25rem;padding:.7rem 1rem;border-radius:3px;
+    background:rgba(120,14,26,.94);box-shadow:0 10px 30px rgba(6,9,12,.5);font-size:.86rem}
+  #oops b{font-weight:700}
+  #oops span{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.78rem;word-break:break-word;opacity:.92}
+  #oops i{font-style:normal;font-size:.76rem;opacity:.66}
   #intro{position:absolute;inset:0;pointer-events:none}
   .ibar{position:absolute;left:0;right:0;height:0;background:#07090c}
   #ibar1{top:0} #ibar2{bottom:0}
@@ -219,6 +225,7 @@
   <div id="blood2"></div>
   <div id="low"></div>
   <div id="pulse"></div>
+  <div id="oops" class="hidden"><b>Something went wrong</b><span id="oopsmsg"></span><i>Reload the page. If it keeps happening, send this text.</i></div>
   <div id="intro" class="hidden">
     <div class="ibar" id="ibar1"></div>
     <div class="ibar" id="ibar2"></div>
@@ -1282,6 +1289,7 @@ function syncRemoteAvatars(){
 // pose a remote fighter from its interpolated transform
 function driveRemote(b, dt){
   const r = b.net;
+  if(!r) return;                      // local bot: botThink drives this one
   b.alive = r.alive; b.hp = r.hp; b.kills = r.kills; b.deaths = r.deaths;
   b.mesh.visible = r.alive;
   if(!r.alive){ b.mesh.userData.bar.visible = false; return; }
@@ -2394,7 +2402,7 @@ function startMatch(){
   applyQuality();
   buildWorld(curMap);
   initFXOnce();
-  makeBots(M.bots);
+  makeBots(Net.on ? 0 : M.bots);     // online the server owns every bot
   player.kills=0; player.deaths=0;
   spawnPlayer();
   el('feed').innerHTML=''; feedItems.length=0;
@@ -2516,7 +2524,7 @@ function wireNet(){
       S.mode = ['ffa','duel','knock'].indexOf(kind);
       curMap = VergeWorld.pool(kind)[m.map % VergeWorld.pool(kind).length];
       buildWorld(curMap);
-      bots.length = 0;
+      clearBots();                      // drop the meshes too, not just the list
       Net.remote.forEach(r=>{ r.avatar = null; });
       spawnPlayer();
       buildSlots(); buildDeadPicker(); updateHUD(true);
@@ -2565,7 +2573,12 @@ function wireNet(){
       if(d < 58) sfxShot(['ak','p90','awp','pump'][m.cls] || 'ak', clamp(1-d/58, .08, .75));
     },
     matchEnd(m){ endMatch(); },
-    dropped(){ addFeed(null, null, false); },
+    dropped(){
+      // the socket died mid-match: drop the server's fighters and carry on solo
+      clearBots();
+      Net.remote.forEach(r=>{ r.avatar = null; });
+      if(match.running && !match.over) makeBots(MODE().bots);
+    },
     roster(){ updateHUD(false); if(Net.handlers.status) Net.handlers.status(); }
   };
 }
@@ -2884,17 +2897,28 @@ function frame(){
     updateIntro(dt);                       // the city holds still while the camera moves
   } else if(match.running && !match.over){
     if(pointerLocked){
-      match.time -= dt;
-      if(match.time<=0){ match.time=0; endMatch(); }
+      if(Net.on && Net.match){
+        match.time = Net.match.time;      // online the server owns the clock, so
+                                          // everyone in the room sees the same one
+      } else {
+        match.time -= dt;
+        if(match.time<=0){ match.time=0; endMatch(); }
+      }
       updatePlayer(dt, now);
       tick++;
       if(Net.on){
         Net.update(dt, netSelf());
         Net.interpolate();
         syncRemoteAvatars();
-        for(let i=0;i<bots.length;i++) driveRemote(bots[i], dt);
-      } else {
-        for(let i=0;i<bots.length;i++) botThink(bots[i], dt, now, tick);
+      }
+      // Each fighter is driven by whatever owns it: a server snapshot when it has a
+      // net entry, local AI when it does not. Never assume the whole array is one
+      // kind — a match started while already connected holds both, and treating a
+      // local bot as remote throws on the first frame and kills everything after it.
+      for(let i=0;i<bots.length;i++){
+        const b = bots[i];
+        if(b.net) driveRemote(b, dt);
+        else botThink(b, dt, now, tick);
       }
       stepFX(dt); stepFeed(dt);
       updateHUD(false); updateCrosshair();
@@ -2944,6 +2968,18 @@ function resize(){
   renderer.setSize(w,h,false);
 }
 // localStorage is not available in every embedding; never let it break boot
+let oopsShown = false;
+function showOops(msg){
+  if(oopsShown) return;
+  oopsShown = true;
+  const b = document.getElementById('oops');
+  if(!b) return;
+  document.getElementById('oopsmsg').textContent = String(msg).slice(0, 300);
+  b.classList.remove('hidden');
+}
+window.addEventListener('error', e=>showOops(e.message + (e.lineno ? '  (line ' + e.lineno + ')' : '')));
+window.addEventListener('unhandledrejection', e=>showOops('async: ' + (e.reason && e.reason.message || e.reason)));
+
 function localStorage_safe(k, v){
   try { if(v === undefined) return window.localStorage.getItem(k); window.localStorage.setItem(k, v); }
   catch(e){ return null; }

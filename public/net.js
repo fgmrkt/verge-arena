@@ -33,8 +33,9 @@ let ws = null;
 let sendAcc = 0;
 let pingAcc = 0;
 let pingSent = 0;
-let retryAt = 0;
+let retryTimer = 0;
 let wantConnect = false;
+let lastOpts = {mode:'ffa', cls:0};
 
 function log(){ if(Net.handlers.log) Net.handlers.log.apply(null, arguments); }
 function emit(name, a, b){ const h = Net.handlers[name]; if(h) h(a, b); }
@@ -53,12 +54,15 @@ Net.connect = function(opts){
   const base = Net.url();
   if(!base){ Net.status = 'offline'; emit('status'); return false; }
   wantConnect = true;
-  open(base, opts.mode || 'ffa', opts.cls || 0);
+  lastOpts = {mode: opts.mode || 'ffa', cls: opts.cls || 0};
+  clearTimeout(retryTimer);
+  open(base, lastOpts.mode, lastOpts.cls);
   return true;
 };
 
 Net.disconnect = function(){
   wantConnect = false;
+  clearTimeout(retryTimer);
   if(ws){ try { ws.close(); } catch(e){} }
   ws = null;
   Net.on = false; Net.status = 'offline';
@@ -72,7 +76,12 @@ function open(base, mode, cls){
   try {
     ws = new WebSocket(base + '?room=' + encodeURIComponent(Net.room) + '&mode=' + mode);
   } catch(e){
-    Net.status = 'lost'; emit('status'); return;
+    Net.status = 'lost'; emit('status');
+    if(wantConnect){
+      clearTimeout(retryTimer);
+      retryTimer = setTimeout(()=>{ if(wantConnect) open(Net.url(), lastOpts.mode, lastOpts.cls); }, 2500);
+    }
+    return;
   }
   ws.onopen = () => {
     ws.send(JSON.stringify({t:'hello', name:Net.name, cls:cls}));
@@ -88,9 +97,16 @@ function open(base, mode, cls){
     Net.remote.clear();
     emit('status');
     if(was) emit('dropped');
-    if(wantConnect) retryAt = performance.now() + 2500;
+    if(wantConnect){
+      clearTimeout(retryTimer);
+      retryTimer = setTimeout(()=>{ if(wantConnect) open(Net.url(), lastOpts.mode, lastOpts.cls); }, 2500);
+    }
   };
   ws.onerror = () => { try { ws.close(); } catch(e){} };
+  if(ws.readyState === 3 && wantConnect){          // refused outright
+    clearTimeout(retryTimer);
+    retryTimer = setTimeout(()=>{ if(wantConnect) open(Net.url(), lastOpts.mode, lastOpts.cls); }, 2500);
+  }
 }
 
 function handle(m){
@@ -175,10 +191,6 @@ function addRemote(info){
 // Called every frame by the game
 // ---------------------------------------------------------------------------
 Net.update = function(dt, me){
-  if(wantConnect && !ws && retryAt && performance.now() > retryAt){
-    retryAt = 0;
-    open(Net.url(), Net.match ? Net.match.mode : 'ffa', me ? me.cls : 0);
-  }
   if(!Net.on || !ws || ws.readyState !== 1) return;
 
   sendAcc += dt;
