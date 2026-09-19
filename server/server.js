@@ -103,8 +103,11 @@ class Room {
     this.startedAt = now();
     if(!quiet){
       this.bots = [];
+      this.fill();                       // the new mode needs its own bots
       for(const p of this.players.values()) this.respawn(p, true);
-      this.broadcast({t:'match', ...this.matchInfo()});
+      // send the roster with the match so clients can drop the previous mode's
+      // fighters instead of keeping them around as ghosts
+      this.broadcast({t:'match', ...this.matchInfo(), roster:this.roster()});
     }
   }
 
@@ -118,6 +121,8 @@ class Room {
 
   // ---- membership -------------------------------------------------------
   add(ws, name){
+    // fill() broadcasts a join per bot. Hold those back from the player who is
+    // still joining: they get the whole roster in the welcome a moment later.
     const p = {
       id: nextId++, ws, bot:false,
       name: (name || 'Player').slice(0,14),
@@ -128,7 +133,9 @@ class Room {
     };
     this.players.set(p.id, p);
     this.respawn(p, true);
+    this.quietFor = p.id;
     this.fill();
+    this.quietFor = 0;
     p.ws.send(JSON.stringify({
       t:'welcome', id:p.id, room:this.name, ...this.matchInfo(),
       roster: this.roster()
@@ -168,7 +175,7 @@ class Room {
       };
       this.bots.push(b);
       this.respawn(b, true);
-      this.broadcast({t:'join', id:b.id, name:b.name, cls:b.cls, bot:true});
+      this.broadcast({t:'join', id:b.id, name:b.name, cls:b.cls, bot:true}, this.quietFor || undefined);
     }
   }
 
