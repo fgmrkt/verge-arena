@@ -228,6 +228,19 @@
   .isub{margin-top:.55rem;font-size:1rem;color:rgba(242,240,234,.72)}
   .iskip{position:absolute;right:8%;bottom:20%;font-size:.78rem;color:rgba(242,240,234,.35);opacity:0}
   #fps{position:absolute;left:1.2rem;top:.9rem;font-size:.78rem;color:rgba(242,240,234,.55)}
+  #mutebadge{position:absolute;left:1.2rem;top:2.3rem;display:flex;align-items:center;gap:.45rem;
+    padding:.32rem .6rem .32rem .5rem;border-radius:3px;background:rgba(226,59,87,.88);
+    color:#fff;font-size:.8rem;font-weight:600;box-shadow:0 4px 14px rgba(0,0,0,.25)}
+  #mutebadge kbd{font:inherit;font-size:.7rem;padding:.05rem .32rem;border-radius:2px;
+    background:rgba(255,255,255,.22)}
+  #mutebadge svg,#soundtoast svg{width:16px;height:16px;flex:none}
+  #soundtoast{position:absolute;left:50%;top:5.2rem;transform:translate(-50%,-6px);
+    display:flex;align-items:center;gap:.55rem;padding:.55rem .95rem;border-radius:4px;
+    background:rgba(16,21,26,.82);box-shadow:inset 0 0 0 1px var(--line);
+    font-size:.95rem;font-weight:600;opacity:0;transition:opacity .18s ease,transform .18s ease}
+  #soundtoast.show{opacity:1;transform:translate(-50%,0)}
+  #soundtoast.off{box-shadow:inset 0 0 0 1px rgba(226,59,87,.7)}
+  #soundtoast small{font-weight:400;color:var(--mute);font-size:.78rem}
   #dead{position:absolute;left:50%;top:44%;transform:translate(-50%,-50%);text-align:center}
   #dead .t{font-size:1.5rem;font-weight:700}
   #dead .s{color:rgba(242,240,234,.7);font-size:.9rem;margin-top:.3rem}
@@ -298,6 +311,8 @@
   </div>
   <div id="feed"></div>
   <div id="fps"></div>
+  <div id="mutebadge" class="hidden"><span id="mutebadgeicon"></span>Muted <kbd>M</kbd></div>
+  <div id="soundtoast"></div>
   <div class="corner" id="vitals">
     <div id="heal">+15</div>
     <div id="vplate">
@@ -1825,7 +1840,28 @@ function refreshAudioGate(){
     else if(!hidden && actx.state === 'suspended') actx.resume().catch(()=>{});
   }
 }
-function toggleMute(){ muted = !muted; setVolume(); }
+const ICON_ON  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/></svg>';
+const ICON_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="m22 9-6 6M16 9l6 6"/></svg>';
+let toastTimer = 0;
+function showMuteState(toast){
+  const b = el('mutebadge');
+  if(b){
+    if(muted) b.classList.remove('hidden'); else b.classList.add('hidden');
+    el('mutebadgeicon').innerHTML = ICON_OFF;
+  }
+  if(!toast) return;
+  const t = el('soundtoast');
+  t.innerHTML = (muted ? ICON_OFF + 'Sound off' : ICON_ON + 'Sound on') + ' <small>press M</small>';
+  t.className = 'show' + (muted ? ' off' : '');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(()=>{ t.className = muted ? 'off' : ''; }, 1400);
+}
+function toggleMute(){
+  muted = !muted; setVolume();
+  localStorage_safe('verge.muted', muted ? '1' : '0');
+  showMuteState(true);
+  if(!muted) sfxBlip(760, .06, .05);       // a tiny tick so you hear it came back
+}
 function audioInit(){
   if(actx) return;
   const AC = window.AudioContext||window.webkitAudioContext;
@@ -2655,6 +2691,7 @@ function endIntro(){
   firing = false;                       // a click used to skip must not carry into the first shot
   el('intro').classList.add('hidden');
   el('hud').classList.remove('hidden');
+  player.pitch = 0; player.recoilOwed = 0;  // hand over looking straight ahead, like the flyover ends
   camera.fov = S.fov; camera.updateProjectionMatrix();
   if(match.over) return;
   match.running = true;
@@ -2813,6 +2850,7 @@ function leaveMatch(){
 function requestLock(){ canvas.requestPointerLock&&canvas.requestPointerLock(); }
 document.addEventListener('pointerlockchange', ()=>{
   pointerLocked = document.pointerLockElement === canvas;
+  if(pointerLocked) lookSettleUntil = performance.now() + 120;
   refreshAudioGate();
   if(!pointerLocked && match.running && !match.over){
     el('pause').classList.remove('hidden');
@@ -2821,8 +2859,14 @@ document.addEventListener('pointerlockchange', ()=>{
     el('pause').classList.add('hidden');
   }
 });
+let lookSettleUntil = 0;
 document.addEventListener('mousemove', e=>{
   if(!pointerLocked) return;
+  if(intro.active) return;                  // the camera is on rails during the flyover
+  // Right after the pointer locks, Chrome can report one huge bogus jump that
+  // flings the view at the sky. Ignore the first moments and any absurd jump.
+  if(performance.now() < lookSettleUntil) return;
+  if(Math.abs(e.movementX) > 400 || Math.abs(e.movementY) > 300) return;
   const w = player.loadout.length ? curW() : null;
   const s = S.sens * 0.0022 * (scopeOn && w ? w.scopeSens : (player.ads && w ? w.adsFov : 1));
   player.yaw   -= e.movementX * s;
@@ -3300,7 +3344,8 @@ function wireMenu(){
 
   el('sens').oninput = e=>{ S.sens = e.target.value/100; el('sensv').textContent = S.sens.toFixed(2); };
   const volSet = v=>{
-    S.volume = v/100; muted = false;
+    S.volume = v/100;
+    if(muted){ muted = false; localStorage_safe('verge.muted', '0'); showMuteState(false); }
     el('volv').textContent = v+'%'; el('vol2v').textContent = v+'%';
     el('vol').value = v; el('vol2').value = v;
     setVolume();
@@ -3364,6 +3409,8 @@ function wireMenu(){
     linkCode = q.get('party') || q.get('room') || '';
   } catch(e){}
   setParty(linkCode || localStorage_safe('verge.party') || newCode());
+  muted = localStorage_safe('verge.muted') === '1';
+  showMuteState(false);
   ensureConnected();
   el('resume').onclick = requestLock;
   el('quit').onclick = leaveMatch;
