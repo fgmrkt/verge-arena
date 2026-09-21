@@ -45,7 +45,16 @@
     background:radial-gradient(120% 90% at 50% 0%,rgba(16,21,26,.55),rgba(16,21,26,.9));
     backdrop-filter:blur(3px);
   }
-  .panel{width:min(820px,92vw);max-height:92vh;overflow:auto}
+  /* the menu scrolls on short screens. Browsers that float the scrollbar over the
+     content (Windows 11, macOS) put it on top of the values on the right, so the
+     panel keeps its own lane for it and draws a slim bar of its own there */
+  .panel{width:min(840px,94vw);max-height:92vh;overflow-y:auto;overflow-x:hidden;
+    padding-right:22px;scrollbar-gutter:stable;
+    scrollbar-width:thin;scrollbar-color:rgba(242,240,234,.28) transparent}
+  .panel::-webkit-scrollbar{width:8px}
+  .panel::-webkit-scrollbar-track{background:transparent}
+  .panel::-webkit-scrollbar-thumb{background:rgba(242,240,234,.25);border-radius:4px}
+  .panel::-webkit-scrollbar-thumb:hover{background:rgba(242,240,234,.45)}
   .wordmark{
     font-size:clamp(3.2rem,9vw,6rem);line-height:.86;font-weight:800;letter-spacing:-.045em;
   }
