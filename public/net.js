@@ -63,7 +63,11 @@ Net.connect = function(opts){
 Net.disconnect = function(){
   wantConnect = false;
   clearTimeout(retryTimer);
-  if(ws){ try { ws.close(); } catch(e){} }
+  if(ws){
+    // detach first: a late close event from this socket must not touch the next one
+    ws.onopen = ws.onmessage = ws.onclose = ws.onerror = null;
+    try { ws.close(); } catch(e){}
+  }
   ws = null;
   Net.on = false; Net.status = 'offline';
   Net.remote.clear();
@@ -73,8 +77,9 @@ Net.disconnect = function(){
 function open(base, mode, cls){
   Net.status = 'connecting';
   emit('status');
+  let sock;
   try {
-    ws = new WebSocket(base + '?room=' + encodeURIComponent(Net.room) + '&mode=' + mode);
+    sock = ws = new WebSocket(base + '?room=' + encodeURIComponent(Net.room) + '&mode=' + mode);
   } catch(e){
     Net.status = 'lost'; emit('status');
     if(wantConnect){
@@ -83,14 +88,19 @@ function open(base, mode, cls){
     }
     return;
   }
-  ws.onopen = () => {
-    ws.send(JSON.stringify({t:'hello', name:Net.name, cls:cls}));
+  // every handler checks it still belongs to the current socket
+  sock.onopen = () => {
+    if(sock !== ws) return;
+    sock.send(JSON.stringify({t:'hello', name:Net.name, cls:cls}));
   };
-  ws.onmessage = ev => {
+  sock.onmessage = ev => {
+    if(sock !== ws) return;
     let m; try { m = JSON.parse(ev.data); } catch(e){ return; }
-    handle(m);
+    if(m && typeof m === 'object') handle(m);
   };
-  ws.onclose = () => {
+  sock.onclose = () => {
+    if(sock !== ws) return;
+    ws = null;
     const was = Net.on;
     Net.on = false;
     Net.status = wantConnect ? 'lost' : 'offline';
@@ -102,8 +112,8 @@ function open(base, mode, cls){
       retryTimer = setTimeout(()=>{ if(wantConnect) open(Net.url(), lastOpts.mode, lastOpts.cls); }, 2500);
     }
   };
-  ws.onerror = () => { try { ws.close(); } catch(e){} };
-  if(ws.readyState === 3 && wantConnect){          // refused outright
+  sock.onerror = () => { try { sock.close(); } catch(e){} };
+  if(sock.readyState === 3 && wantConnect){          // refused outright
     clearTimeout(retryTimer);
     retryTimer = setTimeout(()=>{ if(wantConnect) open(Net.url(), lastOpts.mode, lastOpts.cls); }, 2500);
   }
@@ -141,6 +151,7 @@ function handle(m){
     case 'snap': {
       const t = performance.now();
       if(Net.match) Net.match.time = m.time;
+      if(!Array.isArray(m.e)) break;
       for(let i=0;i<m.e.length;i++){
         const e = m.e[i];
         const id = e[0];

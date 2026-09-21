@@ -184,7 +184,7 @@
   #oops b{font-weight:700}
   #oops span{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:.78rem;word-break:break-word;opacity:.92}
   #oops i{font-style:normal;font-size:.76rem;opacity:.66}
-  #intro{position:absolute;inset:0;pointer-events:none}
+  #intro{position:fixed;inset:0;pointer-events:none;z-index:4}
   .ibar{position:absolute;left:0;right:0;height:0;background:#07090c}
   #ibar1{top:0} #ibar2{bottom:0}
   .icard{position:absolute;left:8%;bottom:19%;opacity:0;display:flex;align-items:center;gap:1.5rem}
@@ -230,14 +230,7 @@
 <body>
 <canvas id="c"></canvas>
 
-<!-- HUD -->
-<div id="hud" class="layer hidden">
-  <div id="dmg"></div>
-  <div id="blood"></div>
-  <div id="blood2"></div>
-  <div id="low"></div>
-  <div id="pulse"></div>
-  <div id="oops" class="hidden"><b>Something went wrong</b><span id="oopsmsg"></span><i>Reload the page. If it keeps happening, send this text.</i></div>
+<!-- opening flyover and error box sit above everything, outside the HUD -->
   <div id="intro" class="hidden">
     <div class="ibar" id="ibar1"></div>
     <div class="ibar" id="ibar2"></div>
@@ -251,6 +244,15 @@
     </div>
     <div class="iskip" id="iskip">Press Space to skip</div>
   </div>
+  <div id="oops" class="hidden"><b>Something went wrong</b><span id="oopsmsg"></span><i>Reload the page. If it keeps happening, send this text.</i></div>
+
+<!-- HUD -->
+<div id="hud" class="layer hidden">
+  <div id="dmg"></div>
+  <div id="blood"></div>
+  <div id="blood2"></div>
+  <div id="low"></div>
+  <div id="pulse"></div>
   <div id="scope"><div class="hint">Hold Shift to steady</div></div>
   <div id="cross">
     <i class="h" id="cl"></i><i class="h" id="cr"></i>
@@ -550,7 +552,8 @@ function shadeBox(g, floor){
 shadeBox(UNIT);
 
 function clearWorld(){
-  world.meshes.forEach(m=>{ scene.remove(m); if(m.geometry!==UNIT) m.geometry.dispose(); m.material.dispose(); });
+  world.meshes.forEach(m=>{ scene.remove(m); if(m.geometry!==UNIT) m.geometry.dispose(); m.material.dispose();
+                            if(typeof m.dispose === 'function') m.dispose(); });
   world.meshes.length = 0;
   if(world.ground){
     scene.remove(world.ground);
@@ -1109,6 +1112,7 @@ function spawnPlayer(){
   player.sliding = false; player.slideT = 0; player.slideCool = 0; player.roll = 0; player.land = 0;
   player.yaw = bestSpawnYaw(player.pos.x, player.pos.y + EYE, player.pos.z);
   player.pitch = 0;
+  exitADS();
   resetPlayerLoadout();
   buildSlots();
   document.getElementById('dead').classList.add('hidden');
@@ -1339,12 +1343,19 @@ function syncRemoteAvatars(){
   });
   for(let i=bots.length-1;i>=0;i--){
     const b = bots[i];
-    if(b.net && !Net.remote.has(b.net.id)){
-      scene.remove(b.mesh);
-      if(b.mesh.userData.bar) scene.remove(b.mesh.userData.bar);
+    // gone, or replaced by a fresh entry under the same id
+    if(b.net && Net.remote.get(b.net.id) !== b.net){
+      disposeBot(b);
       bots.splice(i,1);
     }
   }
+}
+// drop one remote avatar so the next sync rebuilds it (used when its class changes)
+function rebuildAvatar(r){
+  for(let i=bots.length-1;i>=0;i--){
+    if(bots[i].net === r){ disposeBot(bots[i]); bots.splice(i,1); }
+  }
+  r.avatar = null;
 }
 // pose a remote fighter from its interpolated transform
 function driveRemote(b, dt){
@@ -1375,8 +1386,20 @@ function driveRemote(b, dt){
   u.torso.rotation.z = Math.sin(ph)*0.035*amp;
   updateBotBar(b);
 }
+function disposeBot(b){
+  scene.remove(b.mesh);
+  const bar = b.mesh.userData.bar;
+  if(bar){
+    scene.remove(bar);
+    bar.children.forEach(m=>{
+      if(m.material) m.material.dispose();            // per-fighter materials
+      if(m.geometry && m.geometry !== barFIL) m.geometry.dispose();
+    });
+  }
+  if(b.net) b.net.avatar = null;                       // so it is rebuilt if still around
+}
 function clearBots(){
-  bots.forEach(b=>{ scene.remove(b.mesh); if(b.mesh.userData.bar) scene.remove(b.mesh.userData.bar); });
+  bots.forEach(disposeBot);
   bots = [];
 }
 const SPAWN_CLEAR = 26;      // metres an enemy must appear away from you
@@ -1950,6 +1973,7 @@ function applyDamage(victim, dmg, shooter, head){
       document.getElementById('dead').classList.remove('hidden');
       buildDeadPicker();
       exitADS();
+      checkWin();
     }
   } else {
     if(!victim.alive) return;
@@ -2449,6 +2473,8 @@ function checkWin(){
 function endMatch(){
   if(match.over) return;
   match.over = true; match.running = false;
+  if(intro.active){ intro.active = false; el('intro').classList.add('hidden'); }
+  exitADS();
   document.exitPointerLock&&document.exitPointerLock();
   const best = [{name:'You',kills:player.kills}].concat(bots.map(b=>({name:b.name,kills:b.kills})))
     .sort((a,b)=>b.kills-a.kills)[0];
@@ -2464,10 +2490,22 @@ function pickMap(){
   const pool = (M.key === 'duel') ? DUELS : MAPS;      // duels use the compact set
   return pool[(Math.random()*pool.length)|0];
 }
+// online the lobby's match decides the map (and, with friends there, the mode)
+function serverMap(){
+  if(!Net.on || !Net.match) return null;
+  const kind = Net.match.mode === 'knock' ? 'knock' : (Net.match.mode === 'duel' ? 'duel' : 'ffa');
+  // alone, the mode picked in the menu wins: the server switches and answers with
+  // a 'match' of its own a moment later
+  let humans = 0; Net.remote.forEach(r=>{ if(!r.bot) humans++; });
+  if(!humans && Net.match.mode !== MODES[S.mode].key) return null;
+  S.mode = ['ffa','duel','knock'].indexOf(kind);
+  const pool = VergeWorld.pool(kind);
+  return pool[(Net.match.map|0) % pool.length];
+}
 function startMatch(){
   audioInit();
+  curMap = serverMap() || pickMap();
   const M = MODE();
-  curMap = pickMap();
   match.time = M.time; match.target = M.target; match.over=false; match.running=false;
   applyQuality();
   buildWorld(curMap);
@@ -2526,7 +2564,8 @@ function beginIntro(){
   el('introMode').textContent = M.name;
   el('introName').textContent = def.name;
   el('ithumb').style.backgroundImage = 'url(' + mapThumb(def) + ')';
-  el('introSub').textContent = (bots.length+1) + ' fighters · First to ' + match.target + ' · ' + TOD[S.tod].name;
+  const fighters = Net.on ? Net.remote.size + 1 : bots.length + 1;
+  el('introSub').textContent = fighters + ' fighters · First to ' + match.target + ' · ' + TOD[S.tod].name;
   el('intro').classList.remove('hidden');
   el('hud').classList.add('hidden');
 }
@@ -2559,6 +2598,7 @@ function endIntro(){
   el('intro').classList.add('hidden');
   el('hud').classList.remove('hidden');
   camera.fov = S.fov; camera.updateProjectionMatrix();
+  if(match.over) return;
   match.running = true;
   if(!pointerLocked) el('pause').classList.remove('hidden');
 }
@@ -2609,8 +2649,19 @@ function wireNet(){
         });
       }
       Net.remote.forEach(r=>{ r.avatar = null; });
+      player.kills = 0; player.deaths = 0;          // the server starts every match at zero
       spawnPlayer();
       buildSlots(); buildDeadPicker(); updateHUD(true);
+      // the reply came in during the flyover: show the map we are really on
+      if(intro.active) beginIntro();
+    },
+    spawned(m){
+      if(m.id === Net.id){
+        if(!player.alive) reviveLocal({x:m.x, y:m.y, z:m.z, hp:100});
+        return;
+      }
+      const r = Net.remote.get(m.id);
+      if(r && m.cls !== undefined && m.cls !== r.cls){ r.cls = m.cls; rebuildAvatar(r); }
     },
     selfState(s){
       // the server is the authority on whether we are alive and how hurt we are
@@ -2655,12 +2706,12 @@ function wireNet(){
       const d = Math.hypot(camera.position.x-m.x, camera.position.z-m.z);
       if(d < 58) sfxShot(['ak','p90','awp','pump'][m.cls] || 'ak', clamp(1-d/58, .08, .75));
     },
-    matchEnd(m){ endMatch(); },
+    matchEnd(m){ if(match.running || intro.active) endMatch(); },
     dropped(){
       // the socket died mid-match: drop the server's fighters and carry on solo
       clearBots();
       Net.remote.forEach(r=>{ r.avatar = null; });
-      if(match.running && !match.over) makeBots(MODE().bots);
+      if((match.running || intro.active) && !match.over) makeBots(MODE().bots);
     },
     roster(){ updateHUD(false); if(Net.handlers.status) Net.handlers.status(); }
   };
@@ -2675,6 +2726,8 @@ function reviveLocal(s){
   player.alive = true; player.hp = s.hp || 100;
   player.pos.set(s.x, s.y, s.z); player.vel.set(0,0,0);
   player.height = HEIGHT; player.eye = EYE; player.knockLock = 0;
+  player.fallen = false; player.lastHitBy = null; exitADS();
+  player.yaw = bestSpawnYaw(player.pos.x, player.pos.y + EYE, player.pos.z); player.pitch = 0;
   resetPlayerLoadout(); buildSlots();
   document.getElementById('dead').classList.add('hidden');
 }
@@ -2738,7 +2791,7 @@ document.addEventListener('wheel', e=>{
 },{passive:true});
 document.addEventListener('keydown', e=>{
   keys[e.code]=true;
-  if(e.code==='Tab'){ e.preventDefault(); if(match.running&&!match.over){ rowsFor(el('boardrows')); el('board').classList.remove('hidden'); } }
+  if(e.code==='Tab' && match.running){ e.preventDefault(); if(!match.over){ rowsFor(el('boardrows')); el('board').classList.remove('hidden'); } }
   if(!pointerLocked) return;
   if(intro.active && (e.code==='Space' || e.code==='Enter' || e.code==='Escape')){ endIntro(); return; }
   if(e.code==='KeyR') startReload();
@@ -2759,7 +2812,7 @@ document.addEventListener('keyup', e=>{
   keys[e.code]=false;
   if(e.code==='Tab') el('board').classList.add('hidden');
 });
-window.addEventListener('blur', ()=>{ firing=false; for(const k in keys) keys[k]=false; });
+window.addEventListener('blur', ()=>{ firing=false; for(const k in keys) keys[k]=false; if(!S.aimToggle) exitADS(); });
 
 /* ============================================================
    player update
@@ -2838,7 +2891,7 @@ function updatePlayer(dt, now){
     // the eye lags a sudden change in foot height, then catches up smoothly
     if(Math.abs(player.stepDy) > 0.03) player.viewOff = clamp(player.viewOff - player.stepDy, -0.7, 0.7);
 
-    if(player.fallen){ ringOut(player); }
+    if(player.fallen && !Net.on){ ringOut(player); }
     if(now - player.lastHurt > 5 && player.hp<100) player.hp = Math.min(100, player.hp + 16*dt);
 
     const w = curW();
@@ -2991,7 +3044,7 @@ function frame(){
       updatePlayer(dt, now);
       tick++;
       if(Net.on){
-        Net.update(dt, netSelf());
+        Net.update(dt, player.alive ? netSelf() : null);
         Net.interpolate();
         syncRemoteAvatars();
       }
@@ -3206,7 +3259,7 @@ function wireMenu(){
   ensureConnected();
   el('resume').onclick = requestLock;
   el('quit').onclick = leaveMatch;
-  el('again').onclick = startMatch;
+  el('again').onclick = ()=>{ ensureConnected(); startMatch(); };
   el('tomenu').onclick = leaveMatch;
 }
 

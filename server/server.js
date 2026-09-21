@@ -75,6 +75,8 @@ const KILL_HEAL = 15;
 const SPAWN_CLEAR = 26;
 const NAMES = ['Ash','Pike','Nova','Quill','Harlow','Bex','Sable','Corvo','Wren','Juno','Riot','Mox'];
 
+const has = (o,k) => typeof k === 'string' && Object.prototype.hasOwnProperty.call(o,k);
+const num = v => { v = +v; return Number.isFinite(v) ? clamp(v, -1e4, 1e4) : 0; };
 const now = () => Date.now() / 1000;
 const clamp = (v,a,b) => v<a?a:(v>b?b:v);
 const rnd = (a,b) => a + Math.random()*(b-a);
@@ -97,15 +99,18 @@ class Room {
   }
 
   setMode(modeKey, quiet){
-    this.modeKey = MODES[modeKey] ? modeKey : 'ffa';
+    this.modeKey = has(MODES, modeKey) ? modeKey : 'ffa';
     this.mode = MODES[this.modeKey];
     this.mapIndex = (Math.random() * World.poolSize(this.mode.kind)) | 0;
     this.world = World.build(this.mode.kind, this.mapIndex);
     this.timeLeft = this.mode.time;
     this.over = false;
     this.startedAt = now();
+    clearTimeout(this.endTimer); this.endTimer = 0;
     if(!quiet){
+      for(const b of this.bots) this.broadcast({t:'leave', id:b.id});
       this.bots = [];
+      for(const p of this.players.values()){ p.kills = 0; p.deaths = 0; }
       this.fill();                       // the new mode needs its own bots
       for(const p of this.players.values()) this.respawn(p, true);
       // send the roster with the match so clients can drop the previous mode's
@@ -123,16 +128,16 @@ class Room {
   }
 
   // ---- membership -------------------------------------------------------
-  add(ws, name){
+  add(ws, name, cls){
     // fill() broadcasts a join per bot. Hold those back from the player who is
     // still joining: they get the whole roster in the welcome a moment later.
     const p = {
       id: nextId++, ws, bot:false,
-      name: (name || 'Player').slice(0,14),
-      cls: this.mode.classes[0],
+      name: (typeof name === 'string' && name.trim() ? name.trim() : 'Player').slice(0,14),
+      cls: this.mode.classes.includes(cls) ? cls : this.mode.classes[0],
       x:0, y:0, z:0, yaw:0, pitch:0, state:0,
       hp:100, alive:true, kills:0, deaths:0,
-      respawnAt:0, lastSeen: Date.now(), lastShot:0, lastHitBy:null
+      respawnAt:0, lastSeen: Date.now(), lastShot:0, lastHitBy:null, spawnedAt:0
     };
     this.players.set(p.id, p);
     this.respawn(p, true);
@@ -160,7 +165,10 @@ class Room {
   // top up with bots so a half empty lobby still plays
   fill(){
     const want = Math.max(0, this.mode.fill - this.humans());
-    while(this.bots.length > want) this.bots.pop();
+    while(this.bots.length > want){
+      const gone = this.bots.pop();
+      this.broadcast({t:'leave', id:gone.id});
+    }
     while(this.bots.length < want){
       const skillKey = this.mode.skill === 'random' ? pick(SKILL_NAMES)
                      : (SKILL[this.mode.skill] ? this.mode.skill : 'even');
@@ -217,7 +225,7 @@ class Room {
     e.x = s[0]; e.y = this.world.spawnY; e.z = s[1];
     e.vx = e.vy = e.vz = 0;
     e.hp = 100; e.alive = true; e.respawnAt = 0;
-    e.lastHitBy = null; e.knockLock = 0;
+    e.lastHitBy = null; e.knockLock = 0; e.spawnedAt = now();
     e.yaw = Math.atan2(s[0], s[1]) + Math.PI;
     if(!this.mode.classes.includes(e.cls)) e.cls = this.mode.classes[0];
     if(!silent) this.broadcast({t:'spawn', id:e.id, x:e.x, y:e.y, z:e.z, cls:e.cls});
@@ -226,6 +234,7 @@ class Room {
   // ---- damage -----------------------------------------------------------
   hurt(victim, dmg, attacker, head){
     if(!victim || !victim.alive || this.over) return;
+    if(!Number.isFinite(dmg) || dmg <= 0) return;
     if(this.mode.knock){
       // knockback mode: no damage at all, only shove. The client applies the
       // push to itself; the server just records who touched whom last so a
@@ -241,6 +250,7 @@ class Room {
   }
 
   kill(victim, attacker, head){
+    if(this.over || !victim.alive) return;
     victim.alive = false;
     victim.hp = 0;
     victim.deaths++;
@@ -270,7 +280,31 @@ class Room {
   end(winner){
     this.over = true;
     this.broadcast({t:'end', winner: winner ? winner.id : 0, roster:this.roster()});
-    setTimeout(() => this.setMode(this.modeKey), 8000);   // next map
+    clearTimeout(this.endTimer);
+    this.endTimer = setTimeout(() => { this.endTimer = 0; this.setMode(this.modeKey); }, 8000);   // next map
+  }
+
+  // knockback shove. Humans move themselves, so they are told; bots are pushed
+  // here with the same numbers the client uses on itself.
+  shove(target, fx, fz, power, by){
+    if(!target || !target.alive || this.over) return;
+    if(by && by !== target) target.lastHitBy = by.id;
+    if(!target.bot){
+      this.broadcast({t:'shove', id:target.id, fx, fz, power});
+      return;
+    }
+    let dx = target.x - fx, dz = target.z - fz;
+    const len = Math.hypot(dx, dz) || 1; dx /= len; dz /= len;
+    const air = !target.onGround;
+    const push = Math.min(11, power*0.26) * (air ? 0.34 : 1);
+    target.vx += dx*push; target.vz += dz*push;
+    if(!air){
+      target.vy = Math.max(target.vy, 0) + push*0.34;
+      target.knockLock = 0.55; target.onGround = false;
+    }
+    const flat = Math.hypot(target.vx, target.vz);
+    if(flat > 14){ const f = 14/flat; target.vx *= f; target.vz *= f; }
+    if(target.vy > 7.5) target.vy = 7.5;
   }
 
   broadcast(msg, exceptId){
@@ -387,8 +421,7 @@ class Room {
           const acc = S.acc === undefined ? 0.55 : S.acc;
           if(Math.random() < Math.min(0.95, acc / (1 + spread*dist*6))){
             if(kn){
-              this.broadcast({t:'shove', id:foe.id, fx:b.x, fz:b.z, power:power});
-              if(foe !== b) foe.lastHitBy = b.id;
+              this.shove(foe, b.x, b.z, power, b);
             } else {
               const fall = K.fall;
               const mult = dist<=fall[0] ? 1 : (dist>=fall[1] ? 0.42
@@ -494,7 +527,9 @@ const MIME = {'.html':'text/html; charset=utf-8', '.js':'text/javascript; charse
               '.json':'application/json'};
 
 const server = http.createServer((req, res) => {
-  let p = decodeURIComponent((req.url || '/').split('?')[0]);
+  let p;
+  try { p = decodeURIComponent((req.url || '/').split('?')[0]); }
+  catch(e){ res.writeHead(400); return res.end('bad request'); }
   if(p === '/') p = '/index.html';
   const file = path.join(PUBLIC, path.normalize(p).replace(/^(\.\.[/\\])+/, ''));
   if(!file.startsWith(PUBLIC)){ res.writeHead(403); return res.end('no'); }
@@ -506,27 +541,36 @@ const server = http.createServer((req, res) => {
   });
 });
 
-const wss = new WebSocketServer({ server, path:'/ws' });
+const wss = new WebSocketServer({ server, path:'/ws', maxPayload: 16 * 1024 });
 const rooms = new Map();
 function getRoom(name, mode){
-  const key = (name || 'main').slice(0,24);
+  const key = (typeof name === 'string' && name ? name : 'main').slice(0,24);
   if(!rooms.has(key)) rooms.set(key, new Room(key, mode));
   return rooms.get(key);
 }
 
 wss.on('connection', (ws, req) => {
-  const url = new URL(req.url, 'http://x');
-  const room = getRoom(url.searchParams.get('room') || 'main',
-                       url.searchParams.get('mode') || 'ffa');
-  let me = null;
+  let url;
+  try { url = new URL(req.url, 'http://x'); } catch(e){ ws.close(); return; }
+  const roomName = url.searchParams.get('room') || 'main';
+  const modeKey  = url.searchParams.get('mode') || 'ffa';
+  let room = null, me = null;
+  // a socket that never introduces itself is closed rather than kept forever
+  const helloTimer = setTimeout(() => { if(!me){ try { ws.close(4001, 'no hello'); } catch(e){} } }, 8000);
 
   ws.on('message', raw => {
     let m;
     try { m = JSON.parse(raw); } catch(e){ return; }
+    if(!m || typeof m !== 'object') return;
+    try { onMessage(m); } catch(e){ console.error('message error:', e && e.stack || e); }
+  });
+
+  function onMessage(m){
     if(m.t === 'hello'){
       if(me) return;
-      me = room.add(ws, m.name);
-      if(m.cls !== undefined && room.mode.classes.includes(m.cls)) me.cls = m.cls;
+      clearTimeout(helloTimer);
+      room = getRoom(roomName, modeKey);   // only now does the room need to exist
+      me = room.add(ws, m.name, typeof m.cls === 'number' ? m.cls|0 : undefined);
       return;
     }
     if(!me) return;
@@ -534,10 +578,14 @@ wss.on('connection', (ws, req) => {
 
     switch(m.t){
       case 'state':                       // where I am, 20 times a second
-        me.x = +m.x || 0; me.y = +m.y || 0; me.z = +m.z || 0;
-        me.yaw = +m.yaw || 0; me.pitch = +m.pitch || 0;
+        // while dead, and just after a respawn, the client is still reporting where
+        // it used to be; taking that would undo the respawn (and in knockback ring you
+        // out a second time)
+        if(!me.alive || now() - me.spawnedAt < 0.5) break;
+        me.x = num(m.x); me.y = num(m.y); me.z = num(m.z);
+        me.yaw = num(m.yaw); me.pitch = num(m.pitch);
         me.state = m.s | 0;
-        if(!room.world.hasGround && me.y < -4 && me.alive) room.ringOut(me);
+        if(!room.world.hasGround && me.y < -4) room.ringOut(me);
         break;
 
       case 'class':
@@ -545,46 +593,46 @@ wss.on('connection', (ws, req) => {
         break;
 
       case 'shot': {                      // "I fired, and I believe I hit these"
+        if(!has(ARMS, m.w) || !me.alive || room.over) break;
         const arm = ARMS[m.w];
-        if(!arm) break;
         const t = now();
         const minGap = (60 / arm.rpm) * 0.7;          // allow for jitter
         if(t - me.lastShot < minGap) break;           // firing faster than the gun can
         me.lastShot = t;
         room.broadcast({t:'fire', id:me.id, cls:me.cls, x:me.x, y:me.y+1.5, z:me.z, yaw:me.yaw}, me.id);
         if(!Array.isArray(m.hits)) break;
-        const seen = new Set();
         for(const h of m.hits.slice(0, arm.pellets)){
+          if(!h || typeof h !== 'object') continue;
           const target = room.byId(h.id|0);
           if(!target || !target.alive || target === me) continue;
           const d = Math.hypot(target.x-me.x, target.y-me.y, target.z-me.z);
           if(d > arm.range + 5) continue;                       // out of the weapon's reach
           if(room.canSee(me, me.x, me.y+1.5, me.z, target.x, target.y+1.0, target.z, arm.range+5) < 0) continue;
           let dmg = arm.dmg * (h.head ? HEADSHOT : 1);
-          if(h.falloff) dmg *= clamp(+h.falloff, 0.3, 1);
+          const fo = +h.falloff;
+          if(Number.isFinite(fo) && fo > 0) dmg *= clamp(fo, 0.3, 1);
           if(room.mode.knock){
-            room.broadcast({t:'shove', id:target.id, fx:me.x, fz:me.z, power:arm.dmg*(arm.pellets>1?1:2.2)});
-            target.lastHitBy = me.id;
+            room.shove(target, me.x, me.z, arm.dmg*(arm.pellets>1?1:2.2), me);
           } else {
-            room.hurt(target, dmg, me, h.head);
+            room.hurt(target, dmg, me, !!h.head);
           }
-          seen.add(target.id);
         }
         break;
       }
 
       case 'mode':
-        if(MODES[m.mode] && room.humans() <= 1) room.setMode(m.mode);
+        if(has(MODES, m.mode) && room.humans() <= 1) room.setMode(m.mode);
         break;
 
       case 'ping':
-        ws.send(JSON.stringify({t:'pong', c:m.c}));
+        if(ws.readyState === 1) ws.send(JSON.stringify({t:'pong', c:+m.c || 0}));
         break;
     }
-  });
+  }
 
-  ws.on('close', () => { if(me) room.remove(me.id); });
-  ws.on('error', () => { if(me) room.remove(me.id); });
+  const bye = () => { clearTimeout(helloTimer); if(me && room){ room.remove(me.id); me = null; } };
+  ws.on('close', bye);
+  ws.on('error', bye);
 });
 
 // ---------------------------------------------------------------------------
@@ -597,15 +645,17 @@ setInterval(() => {
   last = t;
   if(dt > 0.25) dt = 0.25;
   for(const room of rooms.values()){
-    room.tick(dt);
+    if(room.players.size === 0){
+      clearTimeout(room.endTimer);
+      rooms.delete(room.name);            // nobody home, stop simulating
+      continue;
+    }
+    try { room.tick(dt); } catch(e){ console.error('tick error in ' + room.name + ':', e && e.stack || e); }
     room.snapAcc += dt;
     if(room.snapAcc >= 1/SNAP_HZ){
       room.snapAcc = 0;
       const snap = JSON.stringify(room.snapshot());
       for(const p of room.players.values()) if(p.ws.readyState === 1) p.ws.send(snap);
-    }
-    if(room.players.size === 0 && room.bots.length && t - room.startedAt > 60){
-      rooms.delete(room.name);            // nobody home, stop simulating
     }
   }
 }, 1000 / TICK_HZ);

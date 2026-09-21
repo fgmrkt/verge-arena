@@ -303,6 +303,8 @@ function cityMap(o){
       const k = [kinds(),kinds(),kinds(),kinds()];
       if(!k.includes('door')) k[(R()*4)|0] = 'door';
       if(addStair){ k[3]='window'; stairsLeft--; }
+      // the stair side just took the only door: put one back so the building can be entered
+      if(!k.includes('door')) k[2]='door';
       building(cx, cz, w, d, floors, k, {stair:addStair});
       if(w > 9) s.push(B(cx+(R()-.5)*w*.4, 0, cz+(R()-.5)*d*.4, 2.2,1.1,2.2, 1));   // counter, indoors
     } else {
@@ -529,7 +531,16 @@ function arenaMap(){
   const spawns = [];
   for(let i=0;i<8;i++){
     const a = i/8*Math.PI*2;
-    const sx = Math.cos(a)*(R-6), sz = Math.sin(a)*(R-6);
+    // the coastline wobbles, so a fixed ring left one spawn on the lip. Walk each
+    // one inward until there is 6 m of ground behind it and nothing standing on it.
+    const ground = (x,z)=>have.has(key(Math.round(x/cell), Math.round(z/cell)));
+    const edgeNear = r=>{
+      for(let t=0;t<=6;t+=0.5) if(!ground(Math.cos(a)*(r+t), Math.sin(a)*(r+t))) return true;
+      return false;
+    };
+    let rr = R-6;
+    while(rr > 10 && (edgeNear(rr) || !clear(Math.cos(a)*rr, Math.sin(a)*rr, 1.2))) rr -= 0.5;
+    const sx = Math.cos(a)*rr, sz = Math.sin(a)*rr;
     spawns.push([sx, sz]); claim(sx, sz, 2.6);
   }
 
