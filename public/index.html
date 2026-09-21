@@ -1765,9 +1765,18 @@ let actx=null, noiseBuf=null, muted=false, master=null;
 // everything routes through one gain node, so volume and mute are a single control
 let audioOn = false;                     // world sound only while actually playing
 function setVolume(){ if(master) master.gain.value = (muted || !audioOn) ? 0 : S.volume; }
+// Checked every frame, but also straight away on every event that can end play.
+// The frame loop alone is not enough: a hidden tab stops it, and without these
+// hooks the gate stayed open while shots from the server kept arriving.
 function refreshAudioGate(){
-  const want = match.running && !match.over && pointerLocked && !intro.active;
+  const hidden = typeof document !== 'undefined' && document.hidden;
+  const want = match.running && !match.over && pointerLocked && !intro.active && !hidden;
   if(want !== audioOn){ audioOn = want; setVolume(); }
+  // a hidden tab gets no sound at all, not even a tail
+  if(actx && actx.suspend && actx.resume){
+    if(hidden && actx.state === 'running') actx.suspend().catch(()=>{});
+    else if(!hidden && actx.state === 'suspended') actx.resume().catch(()=>{});
+  }
 }
 function toggleMute(){ muted = !muted; setVolume(); }
 function audioInit(){
@@ -1783,6 +1792,7 @@ function audioInit(){
   for(let i=0;i<d.length;i++) d[i] = (Math.random()*2-1) * (1 - i/d.length);
 }
 function sfxShot(kind, vol){
+  if(!audioOn) return;
   if(!actx||muted) return;
   const t = actx.currentTime;
   const cut  = kind==='awp'?2700:(kind==='pump'?1500:(kind==='deagle'?2100:(kind==='usp'?820:3100)));
@@ -2483,6 +2493,7 @@ function endMatch(){
   el('end').classList.remove('hidden');
   el('board').classList.add('hidden');
   el('pause').classList.add('hidden');
+  refreshAudioGate();
 }
 function pickMap(){
   const M = MODE();
@@ -2701,6 +2712,7 @@ function wireNet(){
       flashDamage();
     },
     fire(m){
+      if(!audioOn) return;                // nobody is listening: in the menu, paused or tabbed out
       const r = Net.remote.get(m.id);
       if(!r) return;
       const d = Math.hypot(camera.position.x-m.x, camera.position.z-m.z);
@@ -2746,6 +2758,7 @@ function leaveMatch(){
   el('end').classList.add('hidden');
   el('menu').classList.remove('hidden');
   document.exitPointerLock&&document.exitPointerLock();
+  refreshAudioGate();
 }
 
 /* ============================================================
@@ -2754,6 +2767,7 @@ function leaveMatch(){
 function requestLock(){ canvas.requestPointerLock&&canvas.requestPointerLock(); }
 document.addEventListener('pointerlockchange', ()=>{
   pointerLocked = document.pointerLockElement === canvas;
+  refreshAudioGate();
   if(!pointerLocked && match.running && !match.over){
     el('pause').classList.remove('hidden');
     el('sens2').value = Math.round(S.sens*100); el('sens2v').textContent = S.sens.toFixed(2);
@@ -2812,7 +2826,8 @@ document.addEventListener('keyup', e=>{
   keys[e.code]=false;
   if(e.code==='Tab') el('board').classList.add('hidden');
 });
-window.addEventListener('blur', ()=>{ firing=false; for(const k in keys) keys[k]=false; if(!S.aimToggle) exitADS(); });
+document.addEventListener('visibilitychange', refreshAudioGate);
+window.addEventListener('blur', ()=>{ refreshAudioGate(); firing=false; for(const k in keys) keys[k]=false; if(!S.aimToggle) exitADS(); });
 
 /* ============================================================
    player update
