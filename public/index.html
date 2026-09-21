@@ -415,7 +415,7 @@
         <div class="keys">
           <b>WASD</b><span>Move — strafe in the air to build speed</span>
           <b>Shift</b><span>Slide while moving, or steady the scope</span>
-          <b>Ctrl / C</b><span>Crouch</span>
+          <b>C</b><span>Crouch</span>
           <b>Space</b><span>Jump, or hop out of a slide</span>
           <b>Left mouse</b><span>Fire</span>
           <b>Right mouse / Q</b><span>Aim — the Marksman's scope is a real optic</span>
@@ -1605,10 +1605,8 @@ function driveRemote(b, dt){
   u.gun.visible = !b.knifeOut; if(u.knife) u.knife.visible = b.knifeOut;
   u.thighL.rotation.x =  Math.sin(ph)*0.70*amp;
   u.thighR.rotation.x = -Math.sin(ph)*0.70*amp;
-  u.shinL.rotation.x = Math.max(0,  Math.sin(ph-0.85))*1.05*amp + 0.05;
-  u.shinR.rotation.x = Math.max(0, -Math.sin(ph-0.85))*1.05*amp + 0.05;
-  u.armL.rotation.x = -0.62; u.armL.rotation.z = 0.46; u.foreL.rotation.x = -1.15;
-  u.armR.rotation.x = -0.60; u.armR.rotation.z = -0.26; u.foreR.rotation.x = -0.95;
+  poseLegs(u, ph, amp);
+  poseArms(u, 1, 0);
   u.gun.rotation.x = -0.03;
   u.torso.position.y = 0.92 + Math.abs(Math.sin(ph))*0.022*amp;
   u.torso.rotation.z = Math.sin(ph)*0.035*amp;
@@ -1960,7 +1958,7 @@ function ensureScopeRT(){
   scopeLive = new THREE.MeshBasicMaterial({map:scopeRT.texture, fog:false});
 }
 
-const GM=0x262c34, POLY=0x33393f, BLK=0x14171b, ACC=0x3f8f8b, GLOVE=0x33383f, CUFF=0x22272d, SIGHT=0x8a939d, WOOD=0x6d4a2a;
+const GM=0x1e2227, POLY=0x262a30, BLK=0x101215, ACC=0x2f7c78, GLOVE=0x33383f, CUFF=0x22272d, SIGHT=0x4e565f, WOOD=0x6d4a2a;
 
 // box part
 function gp(x,y,z,w,h,d,c,ex){ const o={x:x,y:y,z:z,w:w,h:h,d:d,c:c}; if(ex) for(const k in ex) o[k]=ex[k]; return o; }
@@ -2059,9 +2057,9 @@ function knifeMaterials(){
   knifeMats.pin = new THREE.MeshPhongMaterial({color:0xb8bec5, specular:0xffffff, shininess:120,
                                                envMap:env, reflectivity:0.5, combine:THREE.MixOperation});
   knifeMats.accent = new THREE.MeshPhongMaterial({color:0xc8354c, specular:0x662222, shininess:40});
-  knifeMats.glove = new THREE.MeshLambertMaterial({color:0x2c3036});
-  knifeMats.gloveDark = new THREE.MeshLambertMaterial({color:0x202328});
-  knifeMats.sleeve = new THREE.MeshLambertMaterial({color:0x444c57});
+  knifeMats.glove = new THREE.MeshPhongMaterial({color:0x24282e, specular:0x30353b, shininess:14});
+  knifeMats.gloveDark = new THREE.MeshPhongMaterial({color:0x16181c, specular:0x22262b, shininess:10});
+  knifeMats.sleeve = new THREE.MeshPhongMaterial({color:0x171a1f, specular:0x15181b, shininess:4});
   return knifeMats;
 }
 // the knife on its own: used in your hand and, scaled, on other players
@@ -2123,6 +2121,139 @@ function makeKnifeHand(){
   sleeve.rotation.x = Math.PI/2 + 0.18; hand.add(sleeve);
   return hand;
 }
+// ---------------------------------------------------------------------------
+// Weapon building blocks. Big shapes are side profiles extruded with a bevel;
+// round things are real cylinders; only tiny details stay as boxes.
+// Coordinates: f = distance forward (towards -z), u = up. x is left/right.
+// ---------------------------------------------------------------------------
+const gunMats = {};
+function GM2(){
+  if(gunMats.metal) return gunMats;
+  const env = knifeEnvMap();
+  const ph = (c, sp, sh, refl) => new THREE.MeshPhongMaterial({color:c, specular:sp, shininess:sh,
+                                  envMap: refl ? env : null, reflectivity: refl||0, combine:THREE.MixOperation});
+  gunMats.metal  = ph(0x1b1e22, 0x7c858f, 60, 0.035);  // blued steel
+  gunMats.dark   = ph(0x0e1012, 0x4a5058, 50, 0.03);   // barrels, brakes
+  gunMats.poly   = ph(0x1d2024, 0x2c3035, 12, 0);      // polymer furniture
+  gunMats.polyL  = ph(0x2a2e33, 0x363b41, 14, 0);
+  gunMats.wood   = ph(0x3a200e, 0x2e1a0c, 26, 0);      // AK furniture, oiled
+  gunMats.woodD  = ph(0x2a170a, 0x201208, 20, 0);
+  gunMats.sight  = ph(0x8a939c, 0xffffff, 80, 0.15);
+  gunMats.accent = ph(0x3f8f8b, 0x7fd0cc, 40, 0);
+  gunMats.pad    = ph(0x1d2024, 0x202326, 6, 0);
+  return gunMats;
+}
+function shapeOf(pts, holes){
+  const s = new THREE.Shape();
+  s.moveTo(pts[0][0], pts[0][1]);
+  for(let i=1;i<pts.length;i++){
+    const p = pts[i];
+    if(p[2] === 'q') s.quadraticCurveTo(p[3], p[4], p[0], p[1]); else s.lineTo(p[0], p[1]);
+  }
+  (holes||[]).forEach(h=>{
+    const path = new THREE.Path();
+    if(h.ell){ path.absellipse(h.ell[0], h.ell[1], h.ell[2], h.ell[3], 0, Math.PI*2, true); }
+    else { path.moveTo(h[0][0], h[0][1]); for(let i=1;i<h.length;i++){ const p=h[i]; if(p[2]==='q') path.quadraticCurveTo(p[3],p[4],p[0],p[1]); else path.lineTo(p[0],p[1]); } }
+    s.holes.push(path);
+  });
+  return s;
+}
+// an extruded side profile, centred on x (or offset to one side)
+function prof(out, pts, width, mat, opt){
+  opt = opt || {};
+  const m = new THREE.Mesh(extrudeProfile(shapeOf(pts, opt.holes), width, opt.bevel === undefined ? 0.0025 : opt.bevel), mat);
+  if(opt.x) m.position.x = opt.x;
+  out.push(m); return m;
+}
+// a round tube running forward from f0 to f1 at height u
+function tube(out, f0, f1, u, r, mat, opt){
+  opt = opt || {};
+  const g = new THREE.CylinderBufferGeometry(opt.r1 || r, r, f1 - f0, opt.seg || 18, 1, !!opt.open);
+  g.rotateX(-Math.PI/2);                                 // cylinder axis now runs down -z
+  const m = new THREE.Mesh(g, mat);
+  m.position.set(opt.x || 0, u, -(f0 + f1)/2);
+  out.push(m); return m;
+}
+// a small box in forward/up coordinates
+function blk(out, f, u, w, h, d, mat, rx){
+  const m = new THREE.Mesh(new THREE.BoxBufferGeometry(w, h, d), mat);
+  m.position.set(0, u, -f); if(rx) m.rotation.x = rx;
+  out.push(m); return m;
+}
+
+// A gloved hand closed round something that runs along its local z axis.
+// Each finger is a torus arc that actually wraps the object, so the grip reads as
+// a grip; palm, knuckles, thumb, wrist and sleeve are added around it.
+//   R       radius the fingers wrap at (object half-thickness + finger)
+//   palm    angle (radians) of the palm around the axis
+//   sweep   how far the fingers curl, and which way (sign)
+//   thumb   {a: angle, len, dir: +1 runs towards +z}
+//   arm     direction the forearm leaves the wrist, in local coordinates
+function makeGripHand(o){
+  const M = knifeMaterials();
+  const h = new THREE.Group();
+  const R = o.R, t = o.tube || 0.0088, n = 4, sp = o.spacing || 0.0195, z0 = o.z0 || 0;
+  const sign = o.sweep >= 0 ? 1 : -1, arc = Math.abs(o.sweep);
+  const sx = o.sx || 1, sy = o.sy || 1;                 // stretch the wrap to fit a flat grip
+  for(let i=0;i<n;i++){
+    const r = R * (i === 3 ? 0.93 : 1), a = arc * (i === 3 ? 0.9 : 1);
+    const g = new THREE.TorusBufferGeometry(r, t * (i === 3 ? 0.88 : 1), 8, 18, a);
+    const f = new THREE.Mesh(g, M.glove);
+    f.rotation.z = sign > 0 ? o.palm : o.palm - a;
+    f.scale.set(sx, sy, 1);
+    f.position.z = z0 + i*sp;
+    h.add(f);
+    // fingertip
+    const end = sign > 0 ? o.palm + a : o.palm - a;
+    const tip = new THREE.Mesh(new THREE.SphereBufferGeometry(t*1.02, 10, 8), M.glove);
+    tip.position.set(Math.cos(end)*r*sx, Math.sin(end)*r*sy, z0 + i*sp);
+    h.add(tip);
+  }
+  // palm and the back of the hand
+  const pc = Math.cos(o.palm), ps = Math.sin(o.palm);
+  const palm = new THREE.Mesh(new THREE.SphereBufferGeometry(1, 18, 12), M.glove);
+  palm.scale.set(0.020 + Math.abs(ps)*0.014, 0.020 + Math.abs(pc)*0.014, sp*2.6);
+  palm.position.set(pc*(R*sx + 0.010), ps*(R*sy + 0.010), z0 + sp*1.6);
+  h.add(palm);
+  const knuck = new THREE.Mesh(new THREE.SphereBufferGeometry(1, 14, 10), M.gloveDark);
+  knuck.scale.set(0.012 + Math.abs(ps)*0.008, 0.012 + Math.abs(pc)*0.008, sp*2.2);
+  knuck.position.set(pc*(R*sx + 0.021), ps*(R*sy + 0.021), z0 + sp*1.5);
+  h.add(knuck);
+  // thumb: a short capsule laid along the object
+  if(o.thumb){
+    const T = o.thumb, ta = T.a, len = T.len || 0.045;
+    const tg = new THREE.CylinderBufferGeometry(0.0085, 0.0098, len, 12);
+    tg.rotateX(Math.PI/2);
+    const th = new THREE.Mesh(tg, M.glove);
+    th.position.set(Math.cos(ta)*(R*sx + 0.004), Math.sin(ta)*(R*sy + 0.004), z0 + (T.dir > 0 ? len/2 : -len/2) + (T.off||0));
+    h.add(th);
+    const tt = new THREE.Mesh(new THREE.SphereBufferGeometry(0.0088, 10, 8), M.glove);
+    tt.position.set(th.position.x, th.position.y, th.position.z + (T.dir > 0 ? len/2 : -len/2));
+    h.add(tt);
+  }
+  // wrist, cuff and sleeve leave the palm along `arm`
+  if(o.arm){
+    const d = new V3(o.arm[0], o.arm[1], o.arm[2]).normalize();
+    const wz = o.wristZ === undefined ? z0 + sp*3.6 : o.wristZ;
+    const wa = o.wristA === undefined ? o.palm : o.wristA;
+    const base = new V3(Math.cos(wa)*(R*sx + 0.008), Math.sin(wa)*(R*sy + 0.008), wz);
+    const seg = (r0, r1, len, from, mat)=>{
+      const g = new THREE.CylinderBufferGeometry(r1, r0, len, 16);
+      g.translate(0, len/2, 0);
+      const m = new THREE.Mesh(g, mat);
+      m.position.copy(from);
+      m.quaternion.setFromUnitVectors(new V3(0,1,0), d);
+      h.add(m); return m;
+    };
+    seg(0.028, 0.026, 0.05, base, M.glove);
+    const c0 = base.clone().addScaledVector(d, 0.045);
+    seg(0.034, 0.033, 0.03, c0, M.gloveDark);
+    const s0 = base.clone().addScaledVector(d, 0.07);
+    seg(0.046, 0.052, 0.30, s0, M.sleeve);
+  }
+  return h;
+}
+
 // idle pose of the knife in the hand; the animations are offsets from this
 const KNIFE_BASE = {px:0.030, py:0.030, pz:-0.060, rx:0.38, ry:0.75, rz:-1.20};
 function buildKnife(){
@@ -2130,7 +2261,12 @@ function buildKnife(){
   const root = new THREE.Group();                  // the hand and everything it holds
   const K = makeButterfly();
   K.pin.scale.setScalar(1.25);
-  root.add(K.pin, makeKnifeHand());
+  // right hand closed round the safe handle: palm on the right, fingers curling
+  // under and up the far side, thumb along the spine towards the pivot
+  const hand = makeGripHand({R:0.021, tube:0.0086, spacing:0.0185, z0:0.058, palm:-0.25, sweep:-3.6,
+                             sx:0.95, sy:1.25, thumb:{a:2.2, len:0.040, dir:-1, off:0.006}, arm:[0.30,-0.42,1]});
+  hand.position.z = 0;
+  root.add(K.pin, hand);
   root.position.set(KNIFE_BASE.px, KNIFE_BASE.py, KNIFE_BASE.pz);
   root.rotation.set(KNIFE_BASE.rx, KNIFE_BASE.ry, KNIFE_BASE.rz);
   g.add(root);
@@ -2147,136 +2283,177 @@ function buildKnife(){
 function buildGun(shape){
   if(shape === 'knife') return buildKnife();
   const g = new THREE.Group();
-  const body = [];
-  let boltSpec = null, flashZ = -0.6, flashR = 0.07, optic = null;
+  const body = [];                                 // small details, merged into one mesh
+  const parts = [];                                // shaped parts, each its own mesh
+  const G = GM2();
+  let boltSpec = null, boltObj = null, flashZ = -0.6, flashR = 0.07, optic = null;
 
-  function hands(gripZ, gripY, guardZ, guardY){
-    body.push(gp(0.005,gripY-0.02,gripZ, 0.085,0.13,0.11, GLOVE));
-    body.push(gp(0.03,gripY-0.15,gripZ+0.12, 0.10,0.14,0.22, CUFF, {rx:0.35}));
-    body.push(gp(-0.02,guardY-0.05,guardZ, 0.085,0.12,0.13, GLOVE));
-    body.push(gp(-0.08,guardY-0.18,guardZ+0.10, 0.10,0.17,0.13, CUFF, {rx:-0.25, ry:0.25}));
+  // Right hand round the pistol grip, left hand under the fore-end.
+  //   grip: [f, u] top of the grip, rake (how far it leans back), size
+  //   guard: [f, u] centre under the fore-end, radius
+  function hands(grip, guard){
+    const rake = grip.rake || 0.30;
+    const th = Math.PI/2 - rake;                   // local z runs down the grip
+    const hr = makeGripHand({R:grip.R || 0.030, sx:grip.sx || 0.80, sy:grip.sy || 1.45, tube:0.0090,
+                             spacing:0.0200, z0:0.012, palm:0.05, sweep:-3.35,
+                             thumb:{a:3.55, len:0.040, dir:-1, off:0.004},
+                             wristZ:-0.004, wristA:0.9, arm:localDir([0.30,-0.45,1], th, 0)});
+    hr.position.set(0, grip.u, -grip.f); hr.rotation.x = th;
+    parts.push(hr);
+    const hl = makeGripHand({R:guard.R || 0.040, sx:guard.sx || 0.85, sy:guard.sy || 1.05, tube:0.0092,
+                             spacing:0.0205, z0:-0.030, palm:-0.75, sweep:-3.15,
+                             thumb:{a:0.9, len:0.044, dir:1, off:0.004},
+                             arm:localDir([-0.35,-0.55,1], 0, Math.PI)});
+    hl.position.set(0, guard.u, -guard.f); hl.rotation.y = Math.PI;
+    parts.push(hl);
   }
+  function localDir(v, rx, ry){
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(rx, ry, 0));
+    const d = new V3(v[0], v[1], v[2]).applyQuaternion(q.conjugate());
+    return [d.x, d.y, d.z];
+  }
+  const S = GM;                                      // colour for merged details
 
   if(shape==='ak'){
-    body.push(gp(0,0,-0.20, 0.072,0.115,0.42, GM));                       // receiver
-    body.push(gp(0,0.062,-0.30, 0.05,0.03,0.40, GM));                     // dust cover
-    body.push(gp(0,0.074,-0.06, 0.098,0.012,0.045, SIGHT));               // rear sight base
-    body.push(gp(-0.041,0.092,-0.06, 0.016,0.032,0.045, SIGHT));          // notch shoulders
+    // receiver with the dust cover sweeping down at the back
+    prof(parts, [[-0.012,-0.057],[0.412,-0.057],[0.412,0.040],[0.10,0.047],[0.02,0.058],[-0.012,0.046]], 0.072, G.metal);
+    prof(parts, [[0.10,0.040],[0.50,0.040],[0.505,0.060],[0.48,0.074],[0.12,0.074],[0.10,0.062]], 0.052, G.metal, {bevel:0.004});
+    // wooden handguard, lower and upper, with a waist
+    prof(parts, [[0.39,-0.057],[0.655,-0.050],[0.66,0.012],[0.39,0.017]], 0.064, G.wood, {bevel:0.005});
+    prof(parts, [[0.40,0.036],[0.64,0.040],[0.645,0.068],[0.41,0.070]], 0.044, G.woodD, {bevel:0.005});
+    tube(parts, 0.44, 0.76, 0.052, 0.015, G.metal);                         // gas tube
+    tube(parts, 0.58, 0.94, 0.006, 0.0165, G.dark);                        // barrel
+    prof(parts, [[0.83,-0.018],[0.89,-0.018],[0.89,0.060],[0.85,0.060],[0.83,0.030]], 0.042, G.metal, {bevel:0.003}); // front sight block
+    prof(parts, [[0.925,-0.030],[1.01,-0.022],[1.01,0.028],[0.925,0.034]], 0.046, G.dark, {bevel:0.004});             // slant brake
+    // the banana magazine curves forward as it drops
+    prof(parts, [[0.10,-0.055],[0.20,-0.055],[0.235,-0.16,'q',0.225,-0.11],[0.285,-0.30,'q',0.26,-0.24],
+                 [0.19,-0.325],[0.15,-0.20,'q',0.16,-0.27],[0.10,-0.055,'q',0.12,-0.12]], 0.048, G.metal, {bevel:0.004});
+    // pistol grip, trigger guard, stock
+    prof(parts, [[0.005,-0.050],[0.075,-0.050],[0.030,-0.205,'q',0.06,-0.14],[-0.035,-0.200],[-0.012,-0.050,'q',-0.03,-0.12]], 0.050, G.woodD, {bevel:0.006});
+    prof(parts, [[0.07,-0.057],[0.15,-0.057],[0.15,-0.064],[0.12,-0.098,'q',0.15,-0.098],[0.07,-0.098],[0.07,-0.057]],
+         0.010, G.metal, {bevel:0.002, holes:[[[0.082,-0.064],[0.14,-0.064],[0.118,-0.090,'q',0.14,-0.090],[0.082,-0.090]]]});
+    prof(parts, [[-0.012,0.046],[-0.36,0.022],[-0.375,0.020],[-0.375,-0.092],[-0.36,-0.090],[-0.10,-0.040],[-0.012,-0.034]], 0.056, G.wood, {bevel:0.006});
+    prof(parts, [[-0.365,0.024],[-0.392,0.024],[-0.392,-0.094],[-0.365,-0.094]], 0.060, G.dark, {bevel:0.003});        // butt plate
+    blk(parts, 0.105, -0.082, 0.006, 0.030, 0.008, G.dark, 0.2);                                                         // trigger
+    // iron sights stay exactly where they were, so aiming still lines up
+    body.push(gp(0,0.074,-0.06, 0.098,0.012,0.045, SIGHT));
+    body.push(gp(-0.041,0.092,-0.06, 0.016,0.032,0.045, SIGHT));
     body.push(gp( 0.041,0.092,-0.06, 0.016,0.032,0.045, SIGHT));
-    body.push(gp(0,-0.02,-0.52, 0.062,0.075,0.26, WOOD));                 // handguard
-    body.push(gp(0,0.052,-0.52, 0.04,0.035,0.26, WOOD));                  // upper handguard
-    body.push(gc(0,0.05,-0.60, 0.018,0.30, GM));                          // gas tube
-    body.push(gc(0,0.005,-0.76, 0.019,0.34, BLK));                        // barrel
-    body.push(gp(0,0.02,-0.86, 0.045,0.075,0.06, GM));                    // front sight block
-    body.push(gp(0,0.0925,-0.86, 0.006,0.035,0.014, SIGHT));              // front post
-    body.push(gp(-0.020,0.094,-0.86, 0.006,0.034,0.012, GM));             // sight ears
-    body.push(gp( 0.020,0.094,-0.86, 0.006,0.034,0.012, GM));
-    body.push(gp(0,-0.02,-0.96, 0.05,0.05,0.09, BLK));                    // slant brake
-    body.push(gp(0,-0.15,-0.16, 0.05,0.20,0.10, GM, {rx:0.16}));          // magazine, curved
-    body.push(gp(0,-0.26,-0.08, 0.05,0.14,0.10, GM, {rx:0.42}));
-    body.push(gp(0,-0.13,0.03, 0.05,0.16,0.085, WOOD, {rx:0.30}));        // grip
-    body.push(gp(0,0.005,0.22, 0.055,0.10,0.28, WOOD));                   // stock
-    body.push(gp(0,0.04,0.36, 0.055,0.09,0.03, BLK));
+    body.push(gp(0,0.0925,-0.86, 0.006,0.035,0.014, SIGHT));
+    body.push(gp(-0.020,0.094,-0.86, 0.006,0.034,0.012, S));
+    body.push(gp( 0.020,0.094,-0.86, 0.006,0.034,0.012, S));
+    for(let i=0;i<3;i++) body.push(gp(0.037,-0.02,-0.05-i*0.12, 0.004,0.012,0.012, BLK));   // rivets
     boltSpec = gp(0.05,0.055,-0.12, 0.028,0.028,0.10, SIGHT);
     flashZ = -1.03; flashR = 0.085;
-    hands(0.04, -0.13, -0.52, -0.02);
+    hands({f:-0.02, u:-0.060, rake:0.34}, {f:0.53, u:-0.020, R:0.044, sx:0.80, sy:1.00});
 
   } else if(shape==='p90'){
-    body.push(gp(0,-0.01,-0.20, 0.085,0.16,0.50, POLY));                  // bullpup shell
-    body.push(gp(0,0.066,-0.26, 0.075,0.040,0.40, POLY));                 // magazine lying flat on top
-    body.push(gp(0,0.080,-0.26, 0.055,0.010,0.36, BLK));                  // rail, clear of the sight line
-    body.push(gp(-0.072,0.100,-0.05, 0.009,0.094,0.09, GM));              // wide holo frame
-    body.push(gp( 0.072,0.100,-0.05, 0.009,0.094,0.09, GM));
-    body.push(gp(0,0.152,-0.05, 0.153,0.009,0.09, GM));                   // hood
-    body.push(gp(0,0.050,-0.05, 0.153,0.009,0.09, GM));                   // base
-    body.push(gp(0,-0.02,-0.50, 0.075,0.11,0.14, POLY));                  // front grip loop
-    body.push(gp(0,-0.10,-0.50, 0.075,0.05,0.14, POLY));
-    body.push(gc(0,0.0,-0.58, 0.018,0.16, BLK));
-    body.push(gp(0,0.0,-0.66, 0.042,0.042,0.05, BLK));
-    body.push(gp(0,-0.11,-0.18, 0.05,0.10,0.10, POLY, {rx:0.18}));        // thumbhole grip
-    body.push(gp(0,-0.02,0.07, 0.085,0.13,0.10, POLY));                   // butt
+    // one organic bullpup shell: finger loop up front, thumbhole behind it
+    prof(parts, [[-0.125,0.050],[0.42,0.050],[0.50,0.022,'q',0.48,0.045],[0.575,-0.030,'q',0.56,0.0],
+                 [0.575,-0.125],[0.54,-0.160,'q',0.575,-0.158],[0.46,-0.160],[0.40,-0.095,'q',0.41,-0.13],
+                 [0.30,-0.092],[0.24,-0.165,'q',0.27,-0.16],[0.13,-0.172],[0.10,-0.098,'q',0.10,-0.14],
+                 [-0.10,-0.092],[-0.128,-0.060,'q',-0.128,-0.090]], 0.086, G.poly,
+         {bevel:0.008, holes:[{ell:[0.492,-0.092,0.034,0.032]}, [[0.16,-0.105],[0.235,-0.105],[0.215,-0.148,'q',0.235,-0.148],[0.16,-0.150]]]});
+    prof(parts, [[0.06,0.050],[0.46,0.050],[0.46,0.086],[0.06,0.086]], 0.072, G.polyL, {bevel:0.004});   // magazine on top
+    tube(parts, 0.55, 0.68, 0.0, 0.017, G.dark);
+    tube(parts, 0.66, 0.70, 0.0, 0.024, G.dark);                                   // flash hider
+    body.push(gp(0,0.080,-0.26, 0.055,0.010,0.36, BLK));
+    body.push(gp(-0.072,0.100,-0.05, 0.009,0.094,0.09, S));                         // wide holo frame
+    body.push(gp( 0.072,0.100,-0.05, 0.009,0.094,0.09, S));
+    body.push(gp(0,0.152,-0.05, 0.153,0.009,0.09, S));
+    body.push(gp(0,0.050,-0.05, 0.153,0.009,0.09, S));
     body.push(gp(0,0.04,-0.44, 0.03,0.012,0.10, ACC));
     boltSpec = gp(0.048,0.02,-0.16, 0.022,0.026,0.09, SIGHT);
     flashZ = -0.72; flashR = 0.07;
-    hands(-0.17, -0.11, -0.50, -0.04);
+    hands({f:0.19, u:-0.100, rake:0.10, R:0.030, sx:0.95, sy:1.1}, {f:0.50, u:-0.075, R:0.030, sx:1.0, sy:1.0});
 
   } else if(shape==='usp'){
-    body.push(gp(0,0.02,-0.10, 0.052,0.075,0.24, GM));                    // slide
-    body.push(gp(0,0.062,-0.10, 0.03,0.012,0.22, BLK));
-    body.push(gp(0,0.0725,-0.19, 0.005,0.025,0.014, SIGHT));              // front post
-    body.push(gp(0,0.064,-0.01, 0.076,0.011,0.018, SIGHT));               // rear base
-    body.push(gp(-0.032,0.0755,-0.01, 0.013,0.021,0.018, SIGHT));         // notch shoulders
+    // the slide is the moving part: it cycles back on every shot
+    const slide = [];
+    prof(slide, [[-0.022,-0.018],[0.222,-0.018],[0.226,0.040],[0.212,0.0575],[-0.004,0.0575],[-0.022,0.042]], 0.052, G.metal, {bevel:0.004});
+    for(let i=0;i<6;i++) blk(slide, 0.004 + i*0.007, 0.022, 0.054, 0.028, 0.0028, G.dark);   // serrations
+    boltObj = new THREE.Group(); slide.forEach(m=>boltObj.add(m));
+    prof(parts, [[-0.018,-0.056],[0.165,-0.056],[0.170,-0.018],[-0.018,-0.018]], 0.048, G.poly, {bevel:0.004});   // frame
+    prof(parts, [[-0.030,-0.030],[0.050,-0.030],[0.018,-0.212,'q',0.045,-0.12],[-0.064,-0.206],[-0.034,-0.030,'q',-0.050,-0.10]], 0.050, G.poly, {bevel:0.007});
+    prof(parts, [[0.045,-0.052],[0.110,-0.052],[0.098,-0.090,'q',0.11,-0.090],[0.045,-0.090]], 0.012, G.poly,
+         {bevel:0.002, holes:[[[0.055,-0.058],[0.100,-0.058],[0.090,-0.083,'q',0.10,-0.083],[0.055,-0.083]]]});
+    tube(parts, 0.22, 0.46, 0.020, 0.030, G.dark, {seg:24});                       // suppressor
+    tube(parts, 0.455, 0.465, 0.020, 0.028, G.metal, {seg:24});
+    body.push(gp(0,0.0725,-0.19, 0.005,0.025,0.014, SIGHT));
+    body.push(gp(0,0.064,-0.01, 0.076,0.011,0.018, SIGHT));
+    body.push(gp(-0.032,0.0755,-0.01, 0.013,0.021,0.018, SIGHT));
     body.push(gp( 0.032,0.0755,-0.01, 0.013,0.021,0.018, SIGHT));
-    body.push(gp(0,-0.03,-0.07, 0.048,0.05,0.18, POLY));                  // frame
-    body.push(gc(0,0.02,-0.34, 0.032,0.24, BLK, {seg:14}));               // suppressor
-    body.push(gp(0,0.02,-0.46, 0.056,0.056,0.02, GM));
-    body.push(gp(0,-0.135,0.02, 0.05,0.18,0.085, POLY, {rx:0.24}));       // grip
-    body.push(gp(0,-0.07,-0.02, 0.03,0.045,0.05, BLK));                   // trigger guard gap filler
     body.push(gp(0,0.052,-0.02, 0.03,0.014,0.06, ACC));
-    boltSpec = gp(0,0.02,-0.10, 0.053,0.076,0.241, GM);                   // whole slide cycles
     flashZ = -0.52; flashR = 0.045;
-    hands(0.02, -0.14, 0.02, -0.16);
+    hands({f:0.01, u:-0.050, rake:0.26, R:0.028, sx:0.85, sy:1.45}, {f:0.02, u:-0.080, R:0.034, sx:0.95, sy:1.4});
 
   } else if(shape==='deagle'){
-    body.push(gp(0,0.03,-0.14, 0.062,0.095,0.32, GM));                    // big slide
-    for(let i=0;i<4;i++) body.push(gp(0.031,0.03,-0.22+i*0.05, 0.004,0.05,0.02, BLK));
-    body.push(gp(0,0.082,-0.14, 0.036,0.016,0.30, BLK));                  // rib
-    body.push(gp(0,0.0795,-0.28, 0.006,0.026,0.016, SIGHT));              // front post
-    body.push(gp(0,0.070,-0.02, 0.084,0.011,0.02, SIGHT));                // rear base
-    body.push(gp(-0.036,0.0825,-0.02, 0.014,0.023,0.02, SIGHT));          // notch shoulders
+    const slide = [];
+    prof(slide, [[-0.022,-0.018],[0.302,-0.018],[0.306,0.050],[0.285,0.078],[0.00,0.078],[-0.022,0.058]], 0.062, G.metal, {bevel:0.005});
+    prof(slide, [[0.03,0.078],[0.27,0.078],[0.27,0.083],[0.03,0.083]], 0.030, G.dark, {bevel:0.0012});           // top rib, kept below the sight line
+    for(let i=0;i<5;i++) blk(slide, 0.01 + i*0.009, 0.030, 0.064, 0.040, 0.0034, G.dark);
+    boltObj = new THREE.Group(); slide.forEach(m=>boltObj.add(m));
+    prof(parts, [[-0.04,-0.072],[0.25,-0.072],[0.35,-0.040],[0.35,0.012],[0.25,-0.012],[-0.04,-0.012]], 0.056, G.metal, {bevel:0.004});
+    prof(parts, [[-0.030,-0.050],[0.070,-0.050],[0.030,-0.255,'q',0.065,-0.15],[-0.080,-0.250],[-0.035,-0.050,'q',-0.06,-0.12]], 0.056, G.pad, {bevel:0.008});
+    prof(parts, [[0.06,-0.070],[0.14,-0.070],[0.125,-0.112,'q',0.14,-0.112],[0.06,-0.112]], 0.012, G.metal,
+         {bevel:0.002, holes:[[[0.07,-0.076],[0.13,-0.076],[0.118,-0.104,'q',0.13,-0.104],[0.07,-0.104]]]});
+    body.push(gp(0,0.0795,-0.28, 0.006,0.026,0.016, SIGHT));
+    body.push(gp(0,0.070,-0.02, 0.084,0.011,0.02, SIGHT));
+    body.push(gp(-0.036,0.0825,-0.02, 0.014,0.023,0.02, SIGHT));
     body.push(gp( 0.036,0.0825,-0.02, 0.014,0.023,0.02, SIGHT));
-    body.push(gp(0,-0.01,-0.30, 0.05,0.05,0.10, BLK));                    // muzzle block
-    body.push(gp(0,-0.04,-0.06, 0.056,0.06,0.20, GM));                    // frame
-    body.push(gp(0,-0.15,0.04, 0.056,0.20,0.10, POLY, {rx:0.22}));        // grip
-    body.push(gp(0,0.06,0.03, 0.03,0.04,0.05, GM));                       // hammer
-    body.push(gp(0,0.06,-0.10, 0.03,0.012,0.10, ACC));
-    boltSpec = gp(0,0.03,-0.14, 0.063,0.096,0.321, GM);
+    body.push(gp(0,0.06,0.03, 0.03,0.04,0.05, S));                               // hammer
     flashZ = -0.38; flashR = 0.085;
-    hands(0.03, -0.15, 0.03, -0.17);
+    hands({f:0.02, u:-0.058, rake:0.24, R:0.030, sx:0.85, sy:1.5}, {f:0.03, u:-0.095, R:0.036, sx:0.95, sy:1.45});
 
   } else if(shape==='pump'){
-    body.push(gp(0,0,-0.20, 0.095,0.135,0.36, GM));                       // receiver
-    body.push(gc(0,0.055,-0.62, 0.028,0.56, BLK));                        // barrel
-    body.push(gc(0,-0.02,-0.56, 0.024,0.42, POLY));                       // magazine tube
-    body.push(gp(0,0.093,-0.86, 0.008,0.024,0.014, SIGHT));               // front bead
-    body.push(gp(0,0.066,-0.04, 0.088,0.011,0.03, SIGHT));                // rear base
-    body.push(gp(-0.034,0.085,-0.04, 0.014,0.026,0.03, SIGHT));           // notch shoulders
+    prof(parts, [[0.02,-0.068],[0.38,-0.068],[0.38,0.068],[0.10,0.068],[0.02,0.050]], 0.092, G.metal, {bevel:0.006});   // receiver
+    tube(parts, 0.34, 0.905, 0.055, 0.026, G.dark, {seg:22});                      // barrel
+    tube(parts, 0.35, 0.78, -0.020, 0.022, G.metal, {seg:18});                     // magazine tube
+    prof(parts, [[0.025,-0.060],[0.090,-0.060],[0.045,-0.215,'q',0.08,-0.14],[-0.030,-0.210],[0.00,-0.060,'q',-0.02,-0.12]], 0.054, G.poly, {bevel:0.007});
+    prof(parts, [[0.02,0.058],[-0.30,0.030],[-0.325,0.030],[-0.325,-0.075],[-0.30,-0.075],[-0.06,-0.050],[0.02,-0.050]], 0.066, G.poly, {bevel:0.008});
+    prof(parts, [[-0.32,0.034],[-0.36,0.034],[-0.36,-0.080],[-0.32,-0.080]], 0.070, G.pad, {bevel:0.006});   // recoil pad
+    prof(parts, [[0.08,-0.068],[0.15,-0.068],[0.135,-0.104,'q',0.15,-0.104],[0.08,-0.104]], 0.012, G.metal,
+         {bevel:0.002, holes:[[[0.09,-0.074],[0.14,-0.074],[0.128,-0.096,'q',0.14,-0.096],[0.09,-0.096]]]});
+    body.push(gp(0,0.093,-0.86, 0.008,0.024,0.014, SIGHT));
+    body.push(gp(0,0.066,-0.04, 0.088,0.011,0.03, SIGHT));
+    body.push(gp(-0.034,0.085,-0.04, 0.014,0.026,0.03, SIGHT));
     body.push(gp( 0.034,0.085,-0.04, 0.014,0.026,0.03, SIGHT));
-    body.push(gp(0,-0.14,0.02, 0.055,0.18,0.09, POLY, {rx:0.28}));        // grip
-    body.push(gp(0,0.0,0.20, 0.075,0.115,0.24, POLY));                    // stock
-    body.push(gp(0,0.0,0.33, 0.075,0.12,0.04, ACC));                      // recoil pad
-    body.push(gp(0,0.052,-0.14, 0.04,0.014,0.12, ACC));
-    body.push(gp(0,0.09,-0.30, 0.03,0.012,0.30, GM));                     // barrel rib
-    boltSpec = gp(0,-0.015,-0.46, 0.086,0.086,0.19, POLY);                // pump foreend
+    body.push(gp(0,0.09,-0.30, 0.03,0.012,0.30, S));                                // barrel rib
+    // the fore-end slides on every pump: ribbed, round
+    const fe = [];
+    tube(fe, 0.365, 0.555, -0.015, 0.040, G.poly, {seg:20});
+    for(let i=0;i<6;i++) tube(fe, 0.380 + i*0.028, 0.390 + i*0.028, -0.015, 0.043, G.pad, {seg:20});
+    boltObj = new THREE.Group(); fe.forEach(m=>boltObj.add(m));
     flashZ = -0.95; flashR = 0.115;
-    hands(0.03, -0.14, -0.46, -0.015);
+    hands({f:0.02, u:-0.068, rake:0.30}, {f:0.46, u:-0.015, R:0.044, sx:0.95, sy:0.95});
 
   } else {
-    body.push(gp(0,0,-0.26, 0.075,0.12,0.56, GM));                        // receiver
-    body.push(gc(0,0.01,-0.80, 0.022,0.56, BLK));                         // long barrel
-    body.push(gp(0,0.01,-1.10, 0.05,0.05,0.10, BLK));                     // brake
-    body.push(gp(0,-0.045,-0.56, 0.062,0.07,0.26, POLY));                 // forend
-    body.push(gp(0,-0.105,-0.62, 0.03,0.06,0.10, POLY));                  // folded bipod
-    body.push(gp(0,-0.15,-0.06, 0.048,0.16,0.09, POLY));                  // magazine
-    body.push(gp(0,-0.13,0.09, 0.05,0.17,0.085, POLY, {rx:0.26}));        // grip
-    body.push(gp(0,0.0,0.28, 0.062,0.12,0.30, POLY));                     // stock
-    body.push(gp(0,0.075,0.19, 0.05,0.05,0.16, POLY));                    // cheek rest
-    // scope: rings, main tube, objective bell, eyepiece — all open so the glass reads through
-    body.push(gp(0,0.098,-0.24, 0.048,0.06,0.036, GM));
-    body.push(gp(0,0.098,-0.46, 0.048,0.06,0.036, GM));
-    body.push(gc(0,0.135,-0.36, 0.042,0.30, GM));
-    body.push(gc(0,0.135,-0.56, 0.058,0.12, GM));
-    body.push(gc(0,0.135,-0.16, 0.058,0.14, GM));                         // eyepiece
-    body.push(gp(0,0.185,-0.33, 0.032,0.034,0.05, ACC));                  // turret
+    prof(parts, [[-0.02,-0.060],[0.54,-0.060],[0.54,0.060],[0.10,0.060],[-0.02,0.050]], 0.074, G.metal, {bevel:0.005});  // receiver
+    tube(parts, 0.52, 1.08, 0.010, 0.020, G.dark, {seg:20, r1:0.016});             // tapered barrel
+    prof(parts, [[1.05,-0.018],[1.15,-0.018],[1.15,0.040],[1.05,0.040]], 0.050, G.dark, {bevel:0.004});
+    prof(parts, [[0.43,-0.082],[0.70,-0.070],[0.70,-0.012],[0.43,-0.012]], 0.064, G.poly, {bevel:0.007});   // fore-end
+    prof(parts, [[0.02,-0.060],[0.11,-0.060],[0.10,-0.225],[0.02,-0.225]], 0.046, G.poly, {bevel:0.004});   // magazine
+    prof(parts, [[-0.04,-0.050],[0.03,-0.050],[-0.01,-0.215,'q',0.02,-0.14],[-0.085,-0.210],[-0.05,-0.050,'q',-0.07,-0.12]], 0.050, G.poly, {bevel:0.007});
+    prof(parts, [[-0.02,0.060],[-0.40,0.060],[-0.43,0.040],[-0.43,-0.090],[-0.40,-0.095],[-0.18,-0.060],[-0.02,-0.050]], 0.064, G.poly,
+         {bevel:0.008, holes:[[[-0.10,-0.030],[-0.30,-0.030],[-0.30,-0.058],[-0.10,-0.045]]]});
+    prof(parts, [[-0.12,0.060],[-0.34,0.060],[-0.34,0.092],[-0.12,0.088]], 0.052, G.polyL, {bevel:0.006});  // cheek rest
+    // scope: rings, main tube, objective bell and eyepiece stay where the lens expects them
+    tube(parts, 0.21, 0.51, 0.135, 0.042, G.metal, {seg:24, open:true});
+    tube(parts, 0.50, 0.62, 0.135, 0.058, G.metal, {seg:24, open:true, r1:0.058});
+    tube(parts, 0.09, 0.23, 0.135, 0.058, G.metal, {seg:24, open:true});
+    body.push(gp(0,0.098,-0.24, 0.048,0.06,0.036, S));
+    body.push(gp(0,0.098,-0.46, 0.048,0.06,0.036, S));
+    body.push(gp(0,0.185,-0.33, 0.032,0.034,0.05, ACC));
     body.push(gp(0,0.135,-0.33, 0.05,0.012,0.05, ACC, {ry:Math.PI/2}));
+    body.push(gp(0,-0.105,-0.62, 0.03,0.06,0.10, POLY));                           // folded bipod
     boltSpec = gp(0.072,0.02,-0.02, 0.11,0.026,0.026, SIGHT);
     flashZ = -1.20; flashR = 0.09;
     optic = {z:-0.086, y:0.135, r:0.052, frontZ:-0.625};
-    hands(0.07, -0.13, -0.56, -0.045);
+    hands({f:0.03, u:-0.052, rake:0.34}, {f:0.56, u:-0.045, R:0.040, sx:0.90, sy:1.0});
   }
+  parts.forEach(m=>g.add(m));
 
-  const shell = new THREE.Mesh(mergeParts(body), matGun);
-  g.add(shell);
+  if(body.length){ const shell = new THREE.Mesh(mergeParts(body), matGun); g.add(shell); }
 
   // the P90's dot sits on tinted glass you see straight through
   if(shape==='p90'){
@@ -2289,7 +2466,7 @@ function buildGun(shape){
     dot.position.set(0,0.100,-0.028);
     g.add(glass, dot);
   }
-  const bolt = new THREE.Mesh(mergeParts([boltSpec]), matGun);
+  const bolt = boltObj || new THREE.Mesh(mergeParts([boltSpec]), matGun);
   g.add(bolt);
 
   // ---- the optic itself: a live lens you actually sight through ----
@@ -2319,7 +2496,7 @@ function buildGun(shape){
   flash.visible = false;
   g.add(flash);
 
-  g.userData = {flash:flash, cone:cone, star:star, bolt:bolt, boltZ:boltSpec.z,
+  g.userData = {flash:flash, cone:cone, star:star, bolt:bolt, boltZ:boltSpec ? boltSpec.z : 0,
                 kind:shape, lens:lens, reticle:reticle};
   return g;
 }
@@ -2564,6 +2741,10 @@ function rewardKill(shooter){
   }
 }
 const _kb = new V3();
+// Knockback strength, shared by offline play and your own shoves online (the server
+// uses the same numbers for its bots). A grounded hit launches you; mid-air hits
+// still push, but weaker, so nobody can be juggled forever.
+const KNOCK = {mul:0.40, cap:17, lift:0.44, air:0.45, flat:22, up:9.5};
 // in knockback mode a hit mostly shoves: the damage is cut right down and the impulse
 // scales with what the shot would have done, so a shotgun blast throws you further
 function applyKnock(victim, dmg, shooter){
@@ -2576,17 +2757,17 @@ function applyKnock(victim, dmg, shooter){
   // Anti-juggle: a shove only lands at full force against someone standing on something.
   // Hits taken in mid-air push far less and add no lift, so nobody can be floated forever.
   const air = !victim.onGround;
-  const push = Math.min(11, dmg * 0.26) * k * (air ? 0.34 : 1);
+  const push = Math.min(KNOCK.cap, dmg * KNOCK.mul) * k * (air ? KNOCK.air : 1);
   victim.vel.x += _kb.x * push;
   victim.vel.z += _kb.z * push;
   if(!air){
-    victim.vel.y = Math.max(victim.vel.y, 0) + push * 0.34;
+    victim.vel.y = Math.max(victim.vel.y, 0) + push * KNOCK.lift;
     victim.knockLock = 0.55;                  // thrown: almost no steering for half a second
     victim.onGround = false;
   }
   const flat = Math.hypot(victim.vel.x, victim.vel.z);
-  if(flat > 14){ const f = 14/flat; victim.vel.x *= f; victim.vel.z *= f; }
-  if(victim.vel.y > 7.5) victim.vel.y = 7.5;
+  if(flat > KNOCK.flat){ const f = KNOCK.flat/flat; victim.vel.x *= f; victim.vel.z *= f; }
+  if(victim.vel.y > KNOCK.up) victim.vel.y = KNOCK.up;
   return 0;                                   // shots never wound here: the drop does the killing
 }
 function applyDamage(victim, dmg, shooter, head){
@@ -2925,22 +3106,31 @@ function botThink(b, dt, now, tick){
   // thighs swing, knees only ever bend backwards
   u.thighL.rotation.x = Math.sin(ph)*0.70*amp;
   u.thighR.rotation.x = -Math.sin(ph)*0.70*amp;
-  u.shinL.rotation.x = Math.max(0, Math.sin(ph-0.85))*1.05*amp + 0.05;
-  u.shinR.rotation.x = Math.max(0, -Math.sin(ph-0.85))*1.05*amp + 0.05;
-  // arms hold the weapon; elbows stay folded
+  poseLegs(u, ph, amp);
+  // arms hold the weapon: right hand on the grip, left hand under the barrel
   const ready = visible ? 1 : 0;
-  u.armL.rotation.x = -0.50 - ready*0.25 + Math.sin(ph)*0.06*amp;
-  u.armL.rotation.z = 0.46;
-  u.foreL.rotation.x = -0.95 - ready*0.30;
-  u.armR.rotation.x = -0.42 - ready*0.32 - Math.sin(ph)*0.06*amp;
-  u.armR.rotation.z = -0.26;
-  u.foreR.rotation.x = -0.70 - ready*0.35;
+  poseArms(u, ready, Math.sin(ph)*0.06*amp);
   u.gun.rotation.x = visible ? -0.03 : 0.62;     // muzzle drops when nothing is in sight
   u.gun.position.set(0.17, 1.24 - (visible?0:0.09), -0.14 - (visible?0.04:0));
   u.torso.position.y = 0.92 + Math.abs(Math.sin(ph))*0.022*amp;
   u.torso.rotation.x = visible ? 0.07 : 0.02;
   u.torso.rotation.z = Math.sin(ph)*0.035*amp;
   updateBotBar(b);
+}
+// The soldier is built facing -z (visor, chest rig and gun all point that way), so
+// limbs reach forward with positive x-rotation and knees fold with negative.
+// These used to be the other way round, which put the arms behind the back.
+function poseLegs(u, ph, amp){
+  u.shinL.rotation.x = -(Math.max(0,  Math.sin(ph-0.85))*1.05*amp + 0.05);
+  u.shinR.rotation.x = -(Math.max(0, -Math.sin(ph-0.85))*1.05*amp + 0.05);
+}
+const ARM_POSE = {lx:0.62, lz:0.62, lf:0.95, rx:-0.12, rz:-0.30, rf:1.55};
+function poseArms(u, ready, sway){
+  const P = ARM_POSE;
+  u.armL.rotation.set(P.lx + ready*0.12 + sway, 0, P.lz);
+  u.foreL.rotation.set(P.lf + ready*0.10, 0, 0);
+  u.armR.rotation.set(P.rx + ready*0.06 - sway, 0, P.rz);
+  u.foreR.rotation.set(P.rf + ready*0.05, 0, 0);
 }
 function updateBotBar(b){
   const u = b.mesh.userData, bar = u.bar;
@@ -3433,15 +3623,15 @@ function wireNet(){
       const dx = player.pos.x - m.fx, dz = player.pos.z - m.fz;
       const len = Math.hypot(dx,dz) || 1;
       const air = !player.onGround;
-      const push = Math.min(11, m.power*0.26) * (air ? 0.34 : 1);
+      const push = Math.min(KNOCK.cap, m.power*KNOCK.mul) * (air ? KNOCK.air : 1);
       player.vel.x += dx/len*push; player.vel.z += dz/len*push;
       if(!air){
-        player.vel.y = Math.max(player.vel.y,0) + push*0.34;
+        player.vel.y = Math.max(player.vel.y,0) + push*KNOCK.lift;
         player.knockLock = 0.55; player.onGround = false;
       }
       const flat = Math.hypot(player.vel.x, player.vel.z);
-      if(flat > 14){ const f = 14/flat; player.vel.x *= f; player.vel.z *= f; }
-      if(player.vel.y > 7.5) player.vel.y = 7.5;
+      if(flat > KNOCK.flat){ const f = KNOCK.flat/flat; player.vel.x *= f; player.vel.z *= f; }
+      if(player.vel.y > KNOCK.up) player.vel.y = KNOCK.up;
       flashDamage();
       showHurtDir(m.fx, m.fz);
     },
@@ -3503,7 +3693,11 @@ function leaveMatch(){
 /* ============================================================
    input
    ============================================================ */
-function requestLock(){ canvas.requestPointerLock&&canvas.requestPointerLock(); }
+function requestLock(){
+  canvas.requestPointerLock&&canvas.requestPointerLock();
+  // in fullscreen, Chrome and Edge let a page keep keys like Ctrl+W for itself
+  try { if(document.fullscreenElement && navigator.keyboard && navigator.keyboard.lock) navigator.keyboard.lock(); } catch(e){}
+}
 document.addEventListener('pointerlockchange', ()=>{
   pointerLocked = document.pointerLockElement === canvas;
   if(pointerLocked) lookSettleUntil = performance.now() + 120;
@@ -3551,6 +3745,9 @@ document.addEventListener('wheel', e=>{
   switchGun((player.gun+dir+player.loadout.length)%player.loadout.length);
 },{passive:true});
 document.addEventListener('keydown', e=>{
+  // in play, swallow Ctrl/Cmd shortcuts so a stray Ctrl+D or Ctrl+S does nothing;
+  // with the game in fullscreen the keyboard is also locked, which catches Ctrl+W
+  if(pointerLocked && (e.ctrlKey || e.metaKey) && e.code !== 'KeyR'){ e.preventDefault(); }
   keys[e.code]=true;
   if(e.code==='Tab' && match.running){ e.preventDefault(); if(!match.over){ rowsFor(el('boardrows')); el('board').classList.remove('hidden'); } }
   if(!pointerLocked) return;
@@ -3572,7 +3769,7 @@ document.addEventListener('keydown', e=>{
       }
     } else if(n>=0 && n<player.loadout.length) switchGun(n);
   }
-  if(e.code==='Space' || e.code==='ControlLeft' || e.code==='ControlRight') e.preventDefault();
+  if(e.code==='Space') e.preventDefault();
 });
 document.addEventListener('keyup', e=>{
   keys[e.code]=false;
@@ -3597,7 +3794,9 @@ function updatePlayer(dt, now){
     let wz = -cos*fwd - sin*str;
     const l = Math.hypot(wx,wz);
     const slideKey = keys['ShiftLeft']||keys['ShiftRight'];
-    const crouchKey = keys['ControlLeft']||keys['ControlRight']||keys['KeyC'];
+    // crouch is C only: Ctrl + W/A/S/D are browser shortcuts (close tab, bookmark,
+    // save, select all) and Ctrl + W in particular cannot be blocked by any page
+    const crouchKey = keys['KeyC'];
     const speedNow0 = Math.hypot(player.vel.x, player.vel.z);
 
     // ---- slide: shift while carrying speed on the ground ----
@@ -3829,25 +4028,38 @@ function animateKnife(u, dt){
 
   if(vm.inspectT > 0){
     const t = 1 - vm.inspectT;                         // 0 -> 1 over three seconds
-    const lift = easeIO(seg(t, 0, 0.12)) * (1 - easeIO(seg(t, 0.88, 1)));
-    // bring it in towards the middle of the screen and turn the flat to you
-    px -= lift * 0.075; py += lift * 0.030; pz += lift * 0.02;
-    ry -= lift * 0.55; rz += lift * 0.45;
-    // three fans: each one swings the bite handle round while the blade spins a full
-    // turn, the hand rolling with it
-    const f = seg(t, 0.12, 0.82), cycles = 3;
-    const c = f * cycles, ci = Math.floor(c), cf = c - ci;
+    const lift = easeIO(seg(t, 0, 0.10)) * (1 - easeIO(seg(t, 0.90, 1)));
+    // bring it in towards the middle of the screen, flat of the blade to you
+    px -= lift * 0.080; py += lift * 0.032; pz += lift * 0.025;
+    ry -= lift * 0.60; rz += lift * 0.50;
+    // three fans: the bite handle swings a full circle round the hand while the
+    // blade turns the other way, each one a little faster than the last
+    const f = seg(t, 0.10, 0.70);
     if(f > 0 && f < 1){
+      const bounds = [0, 0.40, 0.72, 1];
+      let ci = 0; while(ci < 2 && f > bounds[ci+1]) ci++;
+      const cf = (f - bounds[ci]) / (bounds[ci+1] - bounds[ci]);
       const e = easeIO(cf);
-      bite  = -Math.sin(e * PI) * PI * (ci === 1 ? 1.0 : 0.95);
-      blade = (ci % 2 === 0 ? 1 : -1) * e * PI * 2;
-      rz += Math.sin(cf * PI * 2) * 0.55 * lift;
-      rx += Math.sin(cf * PI) * 0.35 * lift;
-      py += Math.sin(cf * PI) * 0.018;
+      bite  = -e * PI * 2;
+      blade =  e * PI * 2 * (ci === 1 ? -1 : 1);
+      rz += Math.sin(cf * PI) * (ci === 1 ? -0.45 : 0.45) * lift;
+      rx += Math.sin(cf * PI) * 0.22 * lift;
+      py += Math.sin(cf * PI) * 0.014;
     }
-    // a final twirl around the hand before it settles back
-    const tw = seg(t, 0.82, 0.96);
-    if(tw > 0 && tw < 1){ ry += Math.sin(tw * PI) * 0.9; rz -= easeIO(tw) * PI * 2; }
+    // an aerial to finish: the whole knife rolls once about its length, up and back
+    const aer = seg(t, 0.72, 0.92);
+    if(aer > 0 && aer < 1){
+      const e = easeIO(aer);
+      py += Math.sin(aer * PI) * 0.05;
+      rz -= e * PI * 2;
+      bite = -Math.sin(aer * PI) * PI * 0.6;
+    }
+  }
+
+  // at rest it breathes a little, so it never looks frozen in the hand
+  if(vm.inspectT <= 0 && vm.slashT <= 0 && vm.stabT <= 0 && vm.drawT <= 0){
+    const tt = performance.now()/1000;
+    rz += Math.sin(tt*1.3)*0.025; rx += Math.sin(tt*0.9)*0.02; py += Math.sin(tt*1.1)*0.003;
   }
 
   if(vm.slashT > 0){

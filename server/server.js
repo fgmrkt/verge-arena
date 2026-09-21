@@ -74,6 +74,8 @@ const ARMS = {
   knife2: {dmg:80,  rpm:66,  pellets:1, range:2.5, melee:true}
 };
 const HEADSHOT = 2;
+// knockback strength; keep in step with KNOCK in public/index.html
+const KNOCK = {mul:0.40, cap:17, lift:0.44, air:0.45, flat:22, up:9.5};
 const KILL_HEAL = 15;
 const SPAWN_CLEAR = 26;
 const NAMES = ['Ash','Pike','Nova','Quill','Harlow','Bex','Sable','Corvo','Wren','Juno','Riot','Mox'];
@@ -302,15 +304,16 @@ class Room {
     let dx = target.x - fx, dz = target.z - fz;
     const len = Math.hypot(dx, dz) || 1; dx /= len; dz /= len;
     const air = !target.onGround;
-    const push = Math.min(11, power*0.26) * (air ? 0.34 : 1);
+    const K = KNOCK;                                   // same numbers as the client
+    const push = Math.min(K.cap, power*K.mul) * (air ? K.air : 1);
     target.vx += dx*push; target.vz += dz*push;
     if(!air){
-      target.vy = Math.max(target.vy, 0) + push*0.34;
+      target.vy = Math.max(target.vy, 0) + push*K.lift;
       target.knockLock = 0.55; target.onGround = false;
     }
     const flat = Math.hypot(target.vx, target.vz);
-    if(flat > 14){ const f = 14/flat; target.vx *= f; target.vz *= f; }
-    if(target.vy > 7.5) target.vy = 7.5;
+    if(flat > K.flat){ const f = K.flat/flat; target.vx *= f; target.vz *= f; }
+    if(target.vy > K.up) target.vy = K.up;
   }
 
   broadcast(msg, exceptId){
