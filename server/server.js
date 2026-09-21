@@ -43,22 +43,28 @@ const MODES = {
 
 // bot skill profiles; FFA rolls one per bot, duels are always Even
 // acc is the base chance a shot connects before range is taken into account
+// Aim is modelled like a person's: on first sight the error is err0 (radians),
+// it settles towards errMin over `track` seconds while they keep the target in
+// view, recoil adds to it during a burst, and a moving target adds its angular
+// speed times a reaction lag. A shot lands if that error is inside the target's
+// silhouette, so close, still targets are easy and far, strafing ones are not.
 const SKILL = {
-  casual: {spread:0.075, rof:0.70, dmg:4.5, react:0.50, speed:3.5, acc:0.42},
-  even:   {spread:0.048, rof:0.52, dmg:6.0, react:0.34, speed:4.2, acc:0.55},
-  sharp:  {spread:0.030, rof:0.40, dmg:8.0, react:0.22, speed:4.9, acc:0.70},
-  knock:  {spread:0.038, rof:0.50, dmg:6.0, react:0.26, speed:4.4, acc:0.60},
+  casual: {spread:0.075, rof:0.70, dmg:4.5, react:0.50, speed:3.5, acc:0.42, err0:0.14,  errMin:0.050, track:0.70, head:0.04, lag:0.32},
+  even:   {spread:0.048, rof:0.52, dmg:6.0, react:0.34, speed:4.2, acc:0.55, err0:0.10,  errMin:0.038, track:0.50, head:0.08, lag:0.28},
+  sharp:  {spread:0.030, rof:0.40, dmg:8.0, react:0.22, speed:4.9, acc:0.70, err0:0.080, errMin:0.027, track:0.38, head:0.12, lag:0.22},
+  knock:  {spread:0.038, rof:0.50, dmg:6.0, react:0.26, speed:4.4, acc:0.60, err0:0.080, errMin:0.024, track:0.40, head:0,    lag:0.14},
   // the duel opponent: quick to react, accurate, and it pushes you
-  duel:   {spread:0.020, rof:0.32, dmg:10,  react:0.14, speed:5.0, acc:0.82}
+  duel:   {spread:0.020, rof:0.32, dmg:10,  react:0.14, speed:5.0, acc:0.82, err0:0.060, errMin:0.015, track:0.30, head:0.12, lag:0.10}
 };
-const SKILL_NAMES = ['casual','even','sharp'];
+// FFA bots are the capable end of the range: no more pushovers
+const SKILL_NAMES = ['even','even','sharp'];
 
 // per-class bot weapon behaviour (kdmg is the shove used in knockback)
 const KIT = [
-  {cls:0, rof:1.15, dmg:1.50, pellets:1, spread:1.00, fall:[30,66], hold:18, near:8,  reach:52, kdmg:30, kpel:1, burst:5, rate:0.13},
-  {cls:1, rof:0.62, dmg:0.80, pellets:1, spread:1.15, fall:[18,40], hold:14, near:5,  reach:34, kdmg:15, kpel:1, burst:9, rate:0.075},
-  {cls:2, rof:2.40, dmg:3.20, pellets:1, spread:0.55, fall:[150,200], hold:34, near:18, reach:70, kdmg:80, kpel:1, burst:1, rate:0.90},
-  {cls:3, rof:1.90, dmg:0.72, pellets:4, spread:3.20, fall:[5,13],  hold:9,  near:3,  reach:18, kdmg:11, kpel:5, burst:3, rate:0.55}
+  {cls:0, rof:1.15, dmg:1.50, pellets:1, spread:1.00, fall:[30,66], hold:18, near:8,  reach:52, kdmg:30, kpel:1, burst:5, rate:0.13,  kick:0.010},
+  {cls:1, rof:0.62, dmg:0.80, pellets:1, spread:1.15, fall:[18,40], hold:14, near:5,  reach:34, kdmg:15, kpel:1, burst:9, rate:0.075, kick:0.005},
+  {cls:2, rof:2.40, dmg:3.20, pellets:1, spread:0.55, fall:[150,200], hold:34, near:18, reach:70, kdmg:80, kpel:1, burst:1, rate:0.90, kick:0},
+  {cls:3, rof:1.90, dmg:0.72, pellets:4, spread:3.20, fall:[5,13],  hold:9,  near:3,  reach:18, kdmg:11, kpel:5, burst:3, rate:0.55,  kick:0.02}
 ];
 
 // weapon damage the server will accept from a client hit claim
@@ -250,6 +256,8 @@ class Room {
       return;
     }
     if(attacker && attacker !== victim) victim.lastHitBy = attacker.id;
+    victim.lastHurtAt = now();
+    if(victim.bot && attacker && attacker !== victim){ victim.threat = attacker.id; victim.threatAt = now(); }
     victim.hp -= dmg;
     this.broadcast({t:'hurt', id:victim.id, hp:Math.max(0,Math.round(victim.hp)),
                     by: attacker ? attacker.id : 0, head: !!head});
@@ -397,6 +405,77 @@ class Room {
     return false;
   }
 
+  // ---- navigation graph over the map's walkable grid, built once per world ----
+  graph(){
+    const W = this.world;
+    if(W.graph) return W.graph;
+    const nodes = W.nav, idx = new Map(), key = (x,z)=>Math.round(x*10)+','+Math.round(z*10);
+    nodes.forEach((n,i)=>idx.set(key(n.x,n.z), i));
+    const y0 = (W.navY || 0.05);
+    const adj = nodes.map(()=>[]);
+    const clearLine = (a, b, y)=>{
+      const dx = b.x-a.x, dz = b.z-a.z, L = Math.hypot(dx,dz);
+      return World.raycast(W, a.x, y, a.z, dx/L, 0, dz/L, L) < 0;
+    };
+    nodes.forEach((n,i)=>{
+      for(const [dx,dz] of [[3,0],[-3,0],[0,3],[0,-3],[3,3],[3,-3],[-3,3],[-3,-3]]){
+        const j = idx.get(key(n.x+dx, n.z+dz));
+        if(j === undefined) continue;
+        const m = nodes[j];
+        if(!clearLine(n, m, y0 + 0.5) || !clearLine(n, m, y0 + 1.4)) continue;
+        if(!W.hasGround && World.freeAt(W.solids, (n.x+m.x)/2, y0 - 0.5, (n.z+m.z)/2, 0.3, 0.4)) continue;  // gap in the island
+        adj[i].push(j);
+      }
+    });
+    W.graph = {nodes, adj, idx, key};
+    return W.graph;
+  }
+  nearestNode(x, z){
+    const G = this.graph();
+    const gx = Math.round(x/3)*3, gz = Math.round(z/3)*3;
+    let best = -1, bd = 1e9;
+    for(let ox=-6; ox<=6; ox+=3) for(let oz=-6; oz<=6; oz+=3){
+      for(const sx of [0, -1, 1]) for(const sz of [0, -1, 1]){        // nav may sit on an odd offset
+        const i = G.idx.get(G.key(gx+ox+sx, gz+oz+sz));
+        if(i === undefined) continue;
+        const n = G.nodes[i], d = Math.hypot(n.x-x, n.z-z);
+        if(d < bd){ bd = d; best = i; }
+      }
+    }
+    if(best < 0){ G.nodes.forEach((n,i)=>{ const d = Math.hypot(n.x-x, n.z-z); if(d < bd){ bd = d; best = i; } }); }
+    return best;
+  }
+  // breadth-first path of node indices from a to b (maps are small)
+  pathTo(a, b){
+    const G = this.graph();
+    if(a < 0 || b < 0) return [];
+    if(a === b) return [b];
+    const prev = new Int32Array(G.nodes.length).fill(-1);
+    prev[a] = a;
+    const q = [a];
+    for(let h=0; h<q.length; h++){
+      const u = q[h];
+      if(u === b) break;
+      for(const v of G.adj[u]) if(prev[v] < 0){ prev[v] = u; q.push(v); }
+    }
+    if(prev[b] < 0) return [];
+    const out = [];
+    for(let v=b; v!==a; v=prev[v]) out.push(v);
+    return out.reverse();
+  }
+  // gunfire carries: bots with nobody in sight go and look
+  noise(src, radius){
+    for(const b of this.bots){
+      if(!b.alive || b === src) continue;
+      if(b.foe && b.seen > 0) continue;
+      const d = Math.hypot(b.x-src.x, b.z-src.z);
+      if(d > radius || Math.random() > 0.8) continue;
+      b.hunt = {x: src.x + (Math.random()-0.5)*4, z: src.z + (Math.random()-0.5)*4, until: now() + 7};
+      b.path = null;
+    }
+  }
+  eye(e){ return e.y + ((e.state & 2) ? 1.0 : 1.5); }
+
   thinkBot(b, dt, t){
     if(!b.alive) return;
     const W = this.world, K = KIT[b.cls], S = b.skill;
@@ -404,76 +483,153 @@ class Room {
 
     // fell off the island
     if(!W.hasGround && b.y < -4){ this.ringOut(b); return; }
-
     b.knockLock = Math.max(0, b.knockLock - dt);
 
-    // choose a foe
+    // heal like a player: after five quiet seconds
+    if(!kn && b.hp < 100 && t - (b.lastHurtAt || 0) > 5) b.hp = Math.min(100, b.hp + 16*dt);
+
+    // ---- choose who to fight: whoever is hurting me, then the easiest target in sight ----
     b.retarget -= dt;
-    if(b.retarget <= 0 || !b.foe || !this.byId(b.foe) || !this.byId(b.foe).alive){
-      b.retarget = 0.35 + Math.random()*0.5;
-      let best = null, bd = 1e9;
+    let cur = b.foe ? this.byId(b.foe) : null;
+    if(cur && !cur.alive) cur = null;
+    if(b.retarget <= 0 || !cur){
+      b.retarget = 0.30 + Math.random()*0.35;
+      let best = null, bs = 1e9;
       for(const o of this.everyone()){
         if(o === b || !o.alive) continue;
-        const d = this.canSee(b, b.x, b.y+1.5, b.z, o.x, o.y+1.15, o.z, K.reach);
-        if(d > 0 && d < bd){ bd = d; best = o; }
+        const d = this.canSee(b, b.x, b.y+1.5, b.z, o.x, this.eye(o) - 0.3, o.z, K.reach);
+        if(d <= 0) continue;
+        let score = d;
+        if(o.id === b.threat && t - (b.threatAt||0) < 4) score *= 0.45;   // shoot back
+        score *= 0.6 + 0.4 * (o.hp / 100);                                // finish the wounded
+        if(cur && o === cur) score *= 0.8;                                // don't flip-flop
+        if(score < bs){ bs = score; best = o; }
       }
+      if(best && best !== cur){ b.aimErr = S.err0; b.seen = 0; }         // new target: aim starts rough
       b.foe = best ? best.id : null;
+      cur = best;
     }
-
-    const foe = b.foe ? this.byId(b.foe) : null;
+    const foe = cur;
     let visible = false, dist = 0;
-    if(foe && foe.alive){
-      const d = this.canSee(b, b.x, b.y+1.5, b.z, foe.x, foe.y+1.15, foe.z, K.reach);
-      if(d > 0){ visible = true; dist = d; }
+    if(foe){
+      const d = this.canSee(b, b.x, b.y+1.5, b.z, foe.x, this.eye(foe) - 0.3, foe.z, K.reach);
+      if(d > 0){ visible = true; dist = d; b.lastSeen = {x:foe.x, z:foe.z, at:t}; b.hunt = null; }
     }
     b.seen = visible ? b.seen + dt : 0;
     if(!visible) b.burst = 0;
+    // aim settles while the target stays in view, and drifts off when it does not
+    if(b.aimErr === undefined) b.aimErr = S.err0;
+    b.aimErr = visible ? S.errMin + (b.aimErr - S.errMin) * Math.exp(-dt / S.track)
+                       : Math.min(S.err0, b.aimErr + dt*0.05);
 
-    let wx = 0, wz = 0;
-    if(visible){
+    // ---- decide where to go ----
+    const lowHp = !kn && b.hp < 38;
+    if(lowHp && visible && !b.retreatUntil && dist > K.near*1.4 && Math.random() < dt*2) b.retreatUntil = t + 2.5 + Math.random()*1.5;
+    if(b.retreatUntil && (t > b.retreatUntil || b.hp > 70)) b.retreatUntil = 0;
+
+    let wx = 0, wz = 0, goal = null;
+    if(visible && !b.retreatUntil){
+      // in the fight: face them, hold this class's range, and never stand still
       const toF = Math.atan2(foe.x-b.x, foe.z-b.z);
       b.yaw = lerpAngle(b.yaw, toF, 1 - Math.pow(0.0005, dt));
       const hold = this.mode.skill === 'duel' ? K.hold * 0.55 : K.hold;
       const want = dist > hold ? 1 : (dist < K.near ? -0.7 : 0);
-      wx = Math.sin(toF)*want + Math.sin(toF+Math.PI/2)*b.strafe*0.85;
-      wz = Math.cos(toF)*want + Math.cos(toF+Math.PI/2)*b.strafe*0.85;
-      if(Math.random() < dt*0.5) b.strafe *= -1;
-
-      if(b.seen > S.react && t > b.nextFire){
-        if(b.burst <= 0) b.burst = kn ? Math.ceil(K.burst*1.5) : K.burst;
-        b.burst--;
-        b.nextFire = t + (b.burst > 0 ? K.rate * rnd(0.88,1.15)
-                                      : (kn ? 0.62*K.rof : S.rof*K.rof) * rnd(0.85,1.25));
-        const pellets = kn ? K.kpel : K.pellets;
-        const power   = kn ? K.kdmg : S.dmg * K.dmg;
-        const spread  = S.spread * K.spread * (kn ? 0.70 : 1);
-        for(let i=0;i<pellets;i++){
-          // bots roll their own accuracy; a miss simply does nothing
-          const acc = S.acc === undefined ? 0.55 : S.acc;
-          if(Math.random() < Math.min(0.95, acc / (1 + spread*dist*6))){
-            if(kn){
-              this.shove(foe, b.x, b.z, power, b);
-            } else {
-              const fall = K.fall;
-              const mult = dist<=fall[0] ? 1 : (dist>=fall[1] ? 0.42
-                          : 1 - 0.58*(dist-fall[0])/(fall[1]-fall[0]));
-              this.hurt(foe, power*mult, b, false);
-            }
-          }
-        }
-        this.broadcast({t:'fire', id:b.id, cls:b.cls, x:b.x, y:b.y+1.45, z:b.z, yaw:b.yaw});
-      }
+      b.strafeT = (b.strafeT || 0) - dt;
+      if(b.strafeT <= 0){ b.strafe = Math.random() < 0.5 ? 1 : -1; b.strafeT = 0.35 + Math.random()*0.7; }
+      wx = Math.sin(toF)*want + Math.sin(toF+Math.PI/2)*b.strafe*0.9;
+      wz = Math.cos(toF)*want + Math.cos(toF+Math.PI/2)*b.strafe*0.9;
+      // the odd hop mid-strafe, like a player dodging
+      if(b.onGround && !kn && Math.random() < dt*0.35){ b.vy = 6.4; b.onGround = false; }
     } else {
-      if(!b.target || Math.hypot(b.x-b.target.x, b.z-b.target.z) < 2.5 || b.stuck > 1.2){
-        b.target = W.nav.length ? pick(W.nav) : {x:0,y:0,z:0};
-        b.stuck = 0;
+      if(b.retreatUntil && foe){
+        // break line of sight: the nearest node the enemy cannot see
+        if(!b.cover || t > b.coverAt + 1.5){
+          const G = this.graph(), me = this.nearestNode(b.x, b.z);
+          let pick = -1, pd = 1e9;
+          const fe = this.eye(foe);
+          G.nodes.forEach((n,i)=>{
+            const d = Math.hypot(n.x-b.x, n.z-b.z);
+            if(d > 14 || d >= pd) return;
+            if(Math.hypot(n.x-foe.x, n.z-foe.z) < Math.hypot(b.x-foe.x, b.z-foe.z)) return;   // not towards them
+            if(this.canSee(b, foe.x, fe, foe.z, n.x, (W.navY||0)+1.2, n.z, 80) > 0) return;
+            pd = d; pick = i;
+          });
+          b.cover = pick >= 0 ? G.nodes[pick] : null; b.coverAt = t; b.path = null;
+        }
+        goal = b.cover;
       }
-      const ang = Math.atan2(b.target.x-b.x, b.target.z-b.z);
-      b.yaw = lerpAngle(b.yaw, ang, 1 - Math.pow(0.002, dt));
+      if(!goal && b.hunt && t < b.hunt.until) goal = b.hunt;
+      if(!goal && b.lastSeen && t - b.lastSeen.at < 4) goal = b.lastSeen;     // chase where they were
+      if(!goal){
+        if(!b.roam || Math.hypot(b.x-b.roam.x, b.z-b.roam.z) < 2.5 || b.stuck > 1.5){
+          // roam somewhere worth going: far from here, leaning towards the middle
+          const N = W.nav; let pick = null, ps = -1;
+          for(let k=0;k<8 && N.length;k++){
+            const n = N[(Math.random()*N.length)|0];
+            const sc = Math.hypot(n.x-b.x, n.z-b.z) - Math.hypot(n.x, n.z)*0.35 + Math.random()*6;
+            if(sc > ps){ ps = sc; pick = n; }
+          }
+          b.roam = pick || {x:0, z:0}; b.path = null; b.stuck = 0;
+        }
+        goal = b.roam;
+      }
+      // follow a path through the streets instead of walking into walls
+      if(!b.path || b.pathGoal !== goal || t > (b.pathAt||0) + 1.2 || b.stuck > 0.8){
+        const from = this.nearestNode(b.x, b.z), to = this.nearestNode(goal.x, goal.z);
+        b.path = this.pathTo(from, to); b.pathGoal = goal; b.pathAt = t;
+        if(b.stuck > 0.8){ b.stuck = 0; if(b.onGround) { b.vy = 6.4; b.onGround = false; } }
+      }
+      const G = this.graph();
+      let tx = goal.x, tz = goal.z;
+      while(b.path && b.path.length){
+        const n = G.nodes[b.path[0]];
+        if(Math.hypot(n.x-b.x, n.z-b.z) < 1.3){ b.path.shift(); continue; }
+        tx = n.x; tz = n.z; break;
+      }
+      const ang = Math.atan2(tx-b.x, tz-b.z);
+      // look where they are going, or back at a threat they are running from
+      const lookAt = b.retreatUntil && foe ? Math.atan2(foe.x-b.x, foe.z-b.z) : ang;
+      b.yaw = lerpAngle(b.yaw, lookAt, 1 - Math.pow(0.003, dt));
       wx = Math.sin(ang); wz = Math.cos(ang);
     }
 
-    // move
+    // ---- shooting ----
+    if(visible && foe && b.seen > S.react && t > b.nextFire){
+      if(b.burst <= 0) b.burst = kn ? Math.ceil(K.burst*1.5) : K.burst;
+      b.burst--;
+      b.nextFire = t + (b.burst > 0 ? K.rate * rnd(0.88,1.15)
+                                    : (kn ? 0.62*K.rof : S.rof*K.rof) * rnd(0.85,1.25));
+      const pellets = kn ? K.kpel : K.pellets;
+      const power   = kn ? K.kdmg : S.dmg * K.dmg;
+      // how hard is this shot: my settled error, my own movement, their movement
+      const fvx = foe.vx || 0, fvz = foe.vz || 0;
+      const rx = foe.x - b.x, rz = foe.z - b.z, rl = Math.hypot(rx, rz) || 1;
+      const lateral = Math.abs((fvx*rz - fvz*rx) / rl);                 // sideways speed of the target
+      const angSpeed = lateral / Math.max(2, dist);
+      const myMove = Math.hypot(b.vx, b.vz) > 2 ? 0.012 : 0;
+      const pelletSpread = pellets > 1 ? S.spread * K.spread * 0.35 : 0;
+      const sigma = Math.hypot(b.aimErr, angSpeed * S.lag, myMove, pelletSpread) * (kn ? 0.7 : 1);
+      const bodyAng = Math.atan(0.34 / Math.max(1, dist));
+      const headAng = Math.atan(0.13 / Math.max(1, dist));
+      for(let i=0;i<pellets;i++){
+        const e = Math.abs(gauss()) * sigma;
+        if(e > bodyAng) continue;                                        // a clean miss
+        if(kn){
+          this.shove(foe, b.x, b.z, power, b);
+          continue;
+        }
+        const head = S.head > 0 && e < headAng && Math.random() < S.head * 2.2;
+        const fall = K.fall;
+        const mult = dist<=fall[0] ? 1 : (dist>=fall[1] ? 0.42 : 1 - 0.58*(dist-fall[0])/(fall[1]-fall[0]));
+        this.hurt(foe, power*mult*(head ? 1.8 : 1), b, head);
+        if(!foe.alive) break;
+      }
+      b.aimErr += K.kick;                                                // recoil climbs through a burst
+      this.broadcast({t:'fire', id:b.id, cls:b.cls, x:b.x, y:b.y+1.45, z:b.z, yaw:b.yaw});
+      this.noise(b, 40);
+    }
+
+    // ---- move ----
     const len = Math.hypot(wx,wz);
     if(len > 0.001){
       wx/=len; wz/=len;
@@ -484,15 +640,15 @@ class Room {
         const nx = wx*c - wz*s2, nz = wx*s2 + wz*c;
         wx = nx; wz = nz;
       }
-      if(World.raycast(W, b.x, b.y+0.9, b.z, wx, 0, wz, 3.4) > 0){
+      if(World.raycast(W, b.x, b.y+0.9, b.z, wx, 0, wz, 1.6) > 0){
         const a = 1.15*b.strafe, c = Math.cos(a), s2 = Math.sin(a);
         const nx = wx*c - wz*s2, nz = wx*s2 + wz*c;
         wx = nx; wz = nz;
       }
       const ctrl = b.knockLock > 0 ? 0.12 : 1;
-      const speed = S.speed * (b.onGround ? 1 : ctrl);
-      const cur = b.vx*wx + b.vz*wz;
-      const add = speed - cur;
+      const speed = S.speed * (b.onGround ? 1 : ctrl) * (b.retreatUntil ? 1.1 : 1);
+      const cur2 = b.vx*wx + b.vz*wz;
+      const add = speed - cur2;
       if(add > 0){
         const acc = Math.min((b.onGround ? 11 : 2.4*ctrl) * dt * speed, add);
         b.vx += wx*acc; b.vz += wz*acc;
@@ -503,13 +659,17 @@ class Room {
       b.vx *= f; b.vz *= f;
     }
     b.vy -= 23*dt;
-    const before = b.x + b.z;
+    const bx = b.x, bz = b.z;
     integrate(W, b, dt, 0.4, 1.72);
-    const moved = Math.abs((b.x + b.z) - before);
+    const moved = Math.hypot(b.x - bx, b.z - bz);
     if(moved < dt*0.6) b.stuck += dt; else b.stuck = Math.max(0, b.stuck - dt);
     b.state = b.alive ? 1 : 0;
   }
 }
+
+// standard normal, for aim error
+function gauss(){ let u = 0, v = 0; while(!u) u = Math.random(); while(!v) v = Math.random();
+  return Math.sqrt(-2*Math.log(u)) * Math.cos(2*Math.PI*v); }
 
 function lerpAngle(a,b,t){
   let d = ((b-a+Math.PI) % (Math.PI*2)) - Math.PI;
@@ -613,6 +773,10 @@ wss.on('connection', (ws, req) => {
         // it used to be; taking that would undo the respawn (and in knockback ring you
         // out a second time)
         if(!me.alive || now() - me.spawnedAt < 0.5) break;
+        { const tt = now(), pdt = tt - (me.stateAt || tt);
+          const nx = num(m.x), nz = num(m.z);
+          if(pdt > 0.02 && pdt < 0.5){ me.vx = (nx - me.x)/pdt; me.vz = (nz - me.z)/pdt; }
+          me.stateAt = tt; }
         me.x = num(m.x); me.y = num(m.y); me.z = num(m.z);
         me.yaw = num(m.yaw); me.pitch = num(m.pitch);
         me.state = m.s | 0;
@@ -638,6 +802,7 @@ wss.on('connection', (ws, req) => {
         bk.tok -= 1;
         me.lastShot = t;
         room.broadcast({t:'fire', id:me.id, cls:me.cls, x:me.x, y:me.y+1.5, z:me.z, yaw:me.yaw, w:m.w}, me.id);
+        if(!(ARMS[m.w] && ARMS[m.w].melee)) room.noise(me, m.w === 'usp' ? 18 : 45);
         if(!Array.isArray(m.hits)) break;
         for(const h of m.hits.slice(0, arm.pellets)){
           if(!h || typeof h !== 'object') continue;

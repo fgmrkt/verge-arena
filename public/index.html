@@ -464,7 +464,7 @@
   <table><thead><tr><th>Player</th><th class="r">Kills</th><th class="r">Deaths</th></tr></thead><tbody id="endrows"></tbody></table>
   <div class="cardbtns">
     <button class="btn" id="again">Play again</button>
-    <button class="btn ghost" id="tomenu">Change setup</button>
+    <button class="btn ghost" id="tomenu">Return to lobby</button>
   </div>
 </div></div>
 
@@ -544,7 +544,7 @@ const ARMS = {
   usp:    {key:'usp',    name:'USP-S',        dmg:26, rpm:400, auto:false, mag:12, reload:1.85, spread:.009, moveMult:2.4, pellets:1, falloff:[22,48],  recoil:0.7, kickY:1.2, adsFov:.86, shape:'usp',    adsPos:{x:0,y:-.0865,z:-.48}, quiet:true},
   p90:    {key:'p90',    name:'P90',          dmg:15, rpm:900, auto:true,  mag:35, reload:2.50, spread:.019, moveMult:2.1, pellets:1, falloff:[18,40],  recoil:0.8, kickY:1.1, adsFov:.86, shape:'p90',    adsPos:{x:0,y:-.100,z:-.52}},
   deagle: {key:'deagle', name:'Desert Eagle', dmg:37, rpm:220, auto:false, mag:7,  reload:2.30, spread:.013, moveMult:3.4, pellets:1, falloff:[30,60],  recoil:3.0, kickY:4.4, adsFov:.82, shape:'deagle', adsPos:{x:0,y:-.0945,z:-.50}},
-  pump:   {key:'pump',   name:'Pump 12',      dmg:10, rpm:70,  auto:false, mag:6,  reload:3.00, spread:.060, moveMult:1.5, pellets:8, falloff:[4,14],   recoil:2.8, kickY:3.6, adsFov:.92, shape:'pump',   adsPos:{x:0,y:-.105,z:-.52}},
+  pump:   {key:'pump',   name:'Pump 12',      dmg:10, rpm:70,  auto:false, mag:6,  reload:3.00, perShell:0.48, reloadStart:0.32, spread:.060, moveMult:1.5, pellets:8, falloff:[4,14],   recoil:2.8, kickY:3.6, adsFov:.92, shape:'pump',   adsPos:{x:0,y:-.105,z:-.52}},
   knife:  {key:'knife',  name:'Butterfly knife', melee:true, dmg:50, heavy:80, rpm:115, auto:true, mag:0, reload:0,
            spread:0, moveMult:1, pellets:1, falloff:null, recoil:0, kickY:0, adsFov:1, shape:'knife',
            range:2.3, speedMul:1.12},
@@ -2007,24 +2007,38 @@ function extrudeProfile(shape, depth, bevel){
   g.computeVertexNormals();
   return g;
 }
-function bladeShape(){
-  // spear-point blade with a clipped spine; x is distance from the pivot in metres
+// Blade in two pieces that meet at the grind line: the flat above it at full
+// thickness, the edge bevel below it thinner and polished. The step between them
+// is what makes a blade read as ground steel.
+function bladeBodyShape(){
   const s = new THREE.Shape();
-  s.moveTo(0.004, -0.0070);
-  s.quadraticCurveTo(0.010, -0.0125, 0.020, -0.0122);          // choil
-  s.lineTo(0.118, -0.0110);                                     // edge
-  s.quadraticCurveTo(0.150, -0.0090, 0.172, 0.0010);            // belly sweeps up to the point
-  s.lineTo(0.140, 0.0082);                                      // clip back along the swedge
-  s.lineTo(0.030, 0.0102);                                      // spine
-  s.quadraticCurveTo(0.012, 0.0110, 0.006, 0.0070);             // kick
-  s.quadraticCurveTo(-0.004, 0.0000, 0.004, -0.0070);           // round the tang
+  s.moveTo(0.004, -0.0072);
+  s.quadraticCurveTo(0.010, -0.0132, 0.020, -0.0130);          // choil
+  s.lineTo(0.024, -0.0046);                                     // up to where the grind starts
+  s.lineTo(0.176, 0.0005);                                      // grind line, running to the point
+  s.lineTo(0.192, 0.0012);                                      // point
+  s.lineTo(0.158, 0.0094);                                      // clip back along the swedge
+  s.lineTo(0.032, 0.0116);                                      // spine
+  s.quadraticCurveTo(0.012, 0.0122, 0.006, 0.0076);             // kicker
+  s.quadraticCurveTo(-0.0048, 0.0000, 0.004, -0.0072);          // round the tang
   const pin = new THREE.Path(); pin.absarc(0.0, 0.0, 0.0022, 0, Math.PI*2, true);
   s.holes.push(pin);
   return s;
 }
+function bladeEdgeShape(){
+  const s = new THREE.Shape();
+  s.moveTo(0.020, -0.0130);
+  s.lineTo(0.136, -0.0122);                                     // straight edge
+  s.quadraticCurveTo(0.170, -0.0096, 0.192, 0.0012);            // belly sweeping up to the point
+  s.lineTo(0.176, 0.0005);
+  s.lineTo(0.024, -0.0046);
+  s.lineTo(0.020, -0.0130);
+  return s;
+}
 function handleShape(){
-  // skeletonised channel handle running back from the pivot (negative x)
-  const L = 0.128, H = 0.0125, r = 0.0055;
+  // skeletonised handle running back from the pivot (negative x): a row of
+  // round cut-outs that shrink towards the butt, and a slot at the end
+  const L = 0.132, H = 0.0128, r = 0.0060;
   const s = new THREE.Shape();
   s.moveTo(0.006, -H);
   s.lineTo(-L + r, -H);
@@ -2033,15 +2047,15 @@ function handleShape(){
   s.quadraticCurveTo(-L, H, -L + r, H);
   s.lineTo(0.006, H);
   s.absarc(0.006, 0, H, Math.PI/2, -Math.PI/2, true);          // rounded head round the pivot
-  for(let i=0;i<5;i++){                                        // the cut-outs
-    const x0 = -0.020 - i*0.020, w = 0.013, h = 0.0056;
-    const hole = new THREE.Path();
-    hole.moveTo(x0, -h); hole.lineTo(x0 - w, -h);
-    hole.absarc(x0 - w, 0, h, -Math.PI/2, Math.PI/2, true);
-    hole.lineTo(x0, h);
-    hole.absarc(x0, 0, h, Math.PI/2, -Math.PI/2, true);
-    s.holes.push(hole);
-  }
+  [[-0.029,0.0064],[-0.050,0.0058],[-0.069,0.0053],[-0.087,0.0048]].forEach(([x,rr])=>{
+    const h = new THREE.Path(); h.absarc(x, 0, rr, 0, Math.PI*2, true); s.holes.push(h);
+  });
+  const slot = new THREE.Path(), sx0 = -0.100, sx1 = -0.117, sh = 0.0042;
+  slot.moveTo(sx0, -sh); slot.lineTo(sx1, -sh);
+  slot.absarc(sx1, 0, sh, -Math.PI/2, Math.PI/2, true);
+  slot.lineTo(sx0, sh);
+  slot.absarc(sx0, 0, sh, Math.PI/2, -Math.PI/2, true);
+  s.holes.push(slot);
   const pin = new THREE.Path(); pin.absarc(0.006, 0, 0.0024, 0, Math.PI*2, true);
   s.holes.push(pin);
   return s;
@@ -2050,10 +2064,13 @@ const knifeMats = {};
 function knifeMaterials(){
   if(knifeMats.steel) return knifeMats;
   const env = knifeEnvMap();
-  knifeMats.steel = new THREE.MeshPhongMaterial({color:0xcfd5db, specular:0xffffff, shininess:140,
-                                                 envMap:env, reflectivity:0.55, combine:THREE.MixOperation});
-  knifeMats.handle = new THREE.MeshPhongMaterial({color:0x1b1e22, specular:0x6a727c, shininess:70,
-                                                  envMap:env, reflectivity:0.12, combine:THREE.MixOperation});
+  knifeMats.steel = new THREE.MeshPhongMaterial({color:0xaeb6be, specular:0xdfe6ec, shininess:60,
+                                                 envMap:env, reflectivity:0.34, combine:THREE.MixOperation});   // satin flat
+  knifeMats.edge = new THREE.MeshPhongMaterial({color:0xe9eef2, specular:0xffffff, shininess:160,
+                                                envMap:env, reflectivity:0.72, combine:THREE.MixOperation});    // mirror edge
+  knifeMats.handle = new THREE.MeshPhongMaterial({color:0x3b4048, specular:0xa9b2bc, shininess:80,
+                                                  envMap:env, reflectivity:0.18, combine:THREE.MixOperation});  // titanium
+  knifeMats.spacer = new THREE.MeshPhongMaterial({color:0x15171a, specular:0x3a3f45, shininess:30});
   knifeMats.pin = new THREE.MeshPhongMaterial({color:0xb8bec5, specular:0xffffff, shininess:120,
                                                envMap:env, reflectivity:0.5, combine:THREE.MixOperation});
   knifeMats.accent = new THREE.MeshPhongMaterial({color:0xc8354c, specular:0x662222, shininess:40});
@@ -2065,21 +2082,29 @@ function knifeMaterials(){
 // the knife on its own: used in your hand and, scaled, on other players
 function makeButterfly(){
   const M = knifeMaterials();
-  const BT = 0.0034, HT = 0.0040;                     // blade and handle thickness
+  const BT = 0.0036, HT = 0.0040;                     // blade and handle thickness
   const pin = new THREE.Group();
   const blade = new THREE.Group();
-  blade.add(new THREE.Mesh(extrudeProfile(bladeShape(), BT, 0.0011), M.steel));
+  blade.add(new THREE.Mesh(extrudeProfile(bladeBodyShape(), BT, 0.0009), M.steel));
+  blade.add(new THREE.Mesh(extrudeProfile(bladeEdgeShape(), BT*0.40, 0.0007), M.edge));
+  // tang pins either side of the pivot
+  const tp = new THREE.CylinderBufferGeometry(0.0014, 0.0014, BT + 0.004, 10); tp.rotateZ(Math.PI/2);
+  [[0.008, 0.0068],[0.008, -0.0060]].forEach(([f,u])=>{ const m = new THREE.Mesh(tp, M.pin); m.position.set(0, u, -f); blade.add(m); });
   pin.add(blade);
   const handle = side => {
     const h = new THREE.Group();
-    const m = new THREE.Mesh(extrudeProfile(handleShape(), HT, 0.0009), M.handle);
+    const m = new THREE.Mesh(extrudeProfile(handleShape(), HT, 0.0011), M.handle);
     m.position.x = side * (BT/2 + HT/2 + 0.0016);
     h.add(m);
+    // back-spacer along the lower edge turns the plate into a channel
+    const sp = new THREE.Mesh(new THREE.BoxBufferGeometry(0.0026, 0.0032, 0.104), M.spacer);
+    sp.position.set(side * (BT/2 + 0.0010), -0.0106, 0.070);
+    h.add(sp);
     // pivot screw and the end screw, both sides
     const screw = new THREE.CylinderBufferGeometry(0.0030, 0.0030, 0.0022, 14);
     screw.rotateZ(Math.PI/2);
     const a = new THREE.Mesh(screw, M.pin); a.position.set(side*(BT/2 + HT + 0.0025), 0, 0); h.add(a);
-    const b = new THREE.Mesh(screw, M.pin); b.position.set(side*(BT/2 + HT + 0.0025), 0, 0.118); h.add(b);
+    const b = new THREE.Mesh(screw, M.pin); b.position.set(side*(BT/2 + HT + 0.0025), 0, 0.124); h.add(b);
     return h;
   };
   const safe = handle(-1), bite = handle(1);
@@ -2811,7 +2836,12 @@ function applyDamage(victim, dmg, shooter, head){
 function playerShoot(now){
   const w = curW();
   if(w.melee){ knifeAttack(now, false); return; }
-  if(player.reloading>0 || !player.alive) return;
+  if(!player.alive) return;
+  // a shell-by-shell reload can be cut short: firing with shells in the tube stops it
+  if(player.reloading>0){
+    if(w.perShell && player.ammo[player.gun] > 0){ player.reloading = 0; player.shellT = 0; }
+    else return;
+  }
   if(now < player.nextShot) return;
   if(player.ammo[player.gun]<=0){ startReload(); return; }
   player.nextShot = now + 60/w.rpm;
@@ -2931,7 +2961,9 @@ function startReload(){
   const w = curW();
   if(w.melee) return;
   if(player.reloading>0 || player.ammo[player.gun]===w.mag) return;
-  player.reloading = w.reload;
+  // the pump opens up, then takes one shell at a time; the rest reload the magazine at once
+  player.reloading = w.perShell ? w.reloadStart + w.perShell : w.reload;
+  player.shellT = w.perShell ? 1 : 0;
   sfxBlip(300,.05,.05);
 }
 function switchGun(i){
@@ -3352,7 +3384,7 @@ function updateHUD(full){
   const cond = hp>85?'Healthy':(hp>45?'Hurt':'Critical');
   setText('vsub', !player.alive ? 'Down' : (stance ? cond+' · '+stance : cond));
   const w = curW();
-  setText('ammo', w.melee ? '\u221E' : (player.reloading>0 ? '—' : player.ammo[player.gun]));
+  setText('ammo', w.melee ? '\u221E' : (player.reloading>0 && !w.perShell ? '—' : player.ammo[player.gun]));
   setText('gunname', w.name + (player.reloading>0?' · reloading':''));
   setText('mkills', player.kills);
   setText('mtarget', match.target);
@@ -3863,7 +3895,15 @@ function updatePlayer(dt, now){
     const w = curW();
     if(player.reloading>0){
       player.reloading -= dt;
-      if(player.reloading<=0){ player.ammo[player.gun] = w.mag; player.reloading=0; }
+      if(w.perShell) player.shellT = Math.max(0, (player.shellT||0) - dt/w.perShell);
+      if(player.reloading<=0){
+        if(w.perShell){
+          player.ammo[player.gun] = Math.min(w.mag, player.ammo[player.gun] + 1);   // one shell in
+          sfxBlip(520, .03, .05);
+          if(player.ammo[player.gun] < w.mag){ player.reloading = w.perShell; player.shellT = 1; }
+          else { player.reloading = 0; sfxBlip(300,.05,.05); }                         // full: rack it
+        } else { player.ammo[player.gun] = w.mag; player.reloading=0; }
+      }
     }
     if(player.heavyQueued){
       player.heavyQueued = false;
@@ -3929,7 +3969,9 @@ function updatePlayer(dt, now){
   // ---- viewmodel ----
   vmKick = lerp(vmKick, 0, 1-Math.pow(0.0002,dt));
   vmSwitch = lerp(vmSwitch, 0, 1-Math.pow(0.002,dt));
-  const relT = player.reloading>0 ? Math.sin(Math.min(1,(w.reload-player.reloading)/w.reload)*Math.PI) : 0;
+  const relT = player.reloading<=0 ? 0
+             : (w.perShell ? 0.45 + 0.25*Math.sin((1 - (player.shellT||0))*Math.PI)
+                           : Math.sin(Math.min(1,(w.reload-player.reloading)/w.reload)*Math.PI));
   const bx = Math.cos(player.bob)*bobAmt*1.5;
   const by = Math.sin(player.bob*2)*bobAmt*1.2;
   const A = w.adsPos || {x:0,y:-.105,z:-.62};
