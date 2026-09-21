@@ -217,6 +217,7 @@
   #feed .fn{font-weight:700;letter-spacing:-.01em}
   #feed .fx{font-size:1.05rem;color:rgba(242,240,234,.5);font-weight:600}
   #feed .fx.hs{color:#e8c34b}
+  #feed .fx.kn{color:#f2f0ea;display:inline-flex;align-items:center}
   #feed .chip{width:9px;height:20px;border-radius:2px;flex:none}
   @keyframes feedin{from{opacity:0;transform:translateX(14px)}to{opacity:1;transform:none}}
   #dmg{position:absolute;inset:0;opacity:0;box-shadow:inset 0 0 140px rgba(226,59,87,.85);transition:opacity .25s ease}
@@ -418,7 +419,8 @@
           <b>Space</b><span>Jump, or hop out of a slide</span>
           <b>Left mouse</b><span>Fire</span>
           <b>Right mouse / Q</b><span>Aim — the Marksman's scope is a real optic</span>
-          <b>1 / 2 / Wheel</b><span>Switch primary and sidearm</span>
+          <b>1 / 2 / 3 / Wheel</b><span>Switch weapon — 3 is your butterfly knife</span>
+          <b>Knife</b><span>Left mouse slashes, right mouse stabs, from behind it always kills. F to flip it.</span>
           <b>R</b><span>Reload</span>
           <b>Tab</b><span>Scoreboard</span>
           <b>M</b><span>Mute or unmute</span>
@@ -543,17 +545,20 @@ const ARMS = {
   p90:    {key:'p90',    name:'P90',          dmg:15, rpm:900, auto:true,  mag:35, reload:2.50, spread:.019, moveMult:2.1, pellets:1, falloff:[18,40],  recoil:0.8, kickY:1.1, adsFov:.86, shape:'p90',    adsPos:{x:0,y:-.100,z:-.52}},
   deagle: {key:'deagle', name:'Desert Eagle', dmg:37, rpm:220, auto:false, mag:7,  reload:2.30, spread:.013, moveMult:3.4, pellets:1, falloff:[30,60],  recoil:3.0, kickY:4.4, adsFov:.82, shape:'deagle', adsPos:{x:0,y:-.0945,z:-.50}},
   pump:   {key:'pump',   name:'Pump 12',      dmg:10, rpm:70,  auto:false, mag:6,  reload:3.00, spread:.060, moveMult:1.5, pellets:8, falloff:[4,14],   recoil:2.8, kickY:3.6, adsFov:.92, shape:'pump',   adsPos:{x:0,y:-.105,z:-.52}},
+  knife:  {key:'knife',  name:'Butterfly knife', melee:true, dmg:50, heavy:80, rpm:115, auto:true, mag:0, reload:0,
+           spread:0, moveMult:1, pellets:1, falloff:null, recoil:0, kickY:0, adsFov:1, shape:'knife',
+           range:2.3, speedMul:1.12},
   awp:    {key:'awp',    name:'Sniper',       dmg:105,rpm:41,  auto:false, mag:5,  reload:3.10, spread:.003, moveMult:9.0, pellets:1, falloff:[220,240],recoil:3.2, kickY:4.0, adsFov:.94, shape:'awp',
            scoped:true, scopeFov:20, scopeSens:0.45, adsPos:{x:0,y:-.135,z:-.075}}
 };
 const CLASSES = [
-  {name:'Rifleman',   line:'AK-47 · USP-S',        guns:['ak','usp'],
+  {name:'Rifleman',   line:'AK-47 · USP-S · Knife',        guns:['ak','usp'],
    note:'Heavy-hitting rifle, four rounds to a kill. The USP-S is quiet and quick.'},
-  {name:'Skirmisher', line:'P90 · Desert Eagle',   guns:['p90','deagle'],
+  {name:'Skirmisher', line:'P90 · Desert Eagle · Knife',   guns:['p90','deagle'],
    note:'Fast, low-recoil spray backed by a hand cannon that kills in three.'},
-  {name:'Marksman',   line:'Sniper · USP-S',       guns:['awp','usp'],
+  {name:'Marksman',   line:'Sniper · USP-S · Knife',       guns:['awp','usp'],
    note:'One shot, one kill, through a scope you genuinely look through. Slow to recover.'},
-  {name:'Breacher',   line:'Pump 12 · USP-S',      guns:['pump','usp'],
+  {name:'Breacher',   line:'Pump 12 · USP-S · Knife',      guns:['pump','usp'],
    note:'Eight pellets. Two shots up close, and very little past fifteen metres.'}
 ];
 const WEAPONS = Object.keys(ARMS).map(k=>ARMS[k]);   // every model gets built once
@@ -1287,6 +1292,7 @@ function resetPlayerLoadout(){
   player.cls = classAllowed(S.cls) ? S.cls : pickList()[0];   // some modes bar some classes
   player.loadout = CLASSES[player.cls].guns.map(k=>ARMS[k]).filter(Boolean);
   if(!player.loadout.length) player.loadout = [ARMS[CLASSES[0].guns[0]], ARMS[CLASSES[0].guns[1]]];
+  player.loadout.push(ARMS.knife);                      // every class carries the butterfly knife
   player.ammo = player.loadout.map(w=>w.mag);
   player.gun = 0; player.reloading = 0; player.nextShot = 0;
   selectGunModel(0);
@@ -1483,6 +1489,11 @@ const BOT_GUNS = [
   ])
 ];
 
+const BOT_KNIFE = mergeParts([
+  gp(0,0,0.02, 0.022,0.030,0.12, 0x3b3f46),           // handles
+  gp(0,0.004,-0.11, 0.008,0.028,0.16, 0xc9d0d6),      // blade
+  gp(0,-0.008,-0.11, 0.009,0.006,0.15, 0xf4f7fa, {flat:true})
+]);
 const matChar = new THREE.MeshLambertMaterial({vertexColors:true});
 const barFIL = new THREE.PlaneBufferGeometry(1,1); barFIL.translate(0.5,0,0);
 const CLASS_CSS = ['#e0566a','#e9a44a','#9a7fe0','#46bf95'];
@@ -1531,7 +1542,8 @@ function makeBotMesh(cls){
   const shinR  = limb(geoShin);  shinR.position.y = -0.46; thighR.add(shinR);
 
   const gun = limb(BOT_GUNS[cls]); gun.position.set(0.17,1.24,-0.14);
-  g.add(torso, armL, armR, thighL, thighR, gun);
+  const knife = limb(BOT_KNIFE); knife.position.set(0.22,1.08,-0.26); knife.rotation.x = -0.5; knife.visible = false;
+  g.add(torso, armL, armR, thighL, thighR, gun, knife);
 
   // health plate. depthTest is off and visibility is gated by a line-of-sight check,
   // so it is never clipped by a doorframe and never shows through a wall.
@@ -1553,7 +1565,7 @@ function makeBotMesh(cls){
 
   g.userData = {torso:torso, armL:armL, armR:armR, foreL:foreL, foreR:foreR,
                 thighL:thighL, thighR:thighR, shinL:shinL, shinR:shinR,
-                gun:gun, bar:bar, fill:fill};
+                gun:gun, knife:knife, bar:bar, fill:fill};
   return g;
 }
 // ---- networked opponents -------------------------------------------------
@@ -1596,13 +1608,15 @@ function driveRemote(b, dt){
             r.ry !== undefined ? r.ry : r.y,
             r.rz !== undefined ? r.rz : r.z);
   b.yaw = r.ryaw !== undefined ? r.ryaw : r.yaw;
+  b.knifeOut = !!(r.state & 16);
   b.pdist = Math.hypot(camera.position.x-b.pos.x, camera.position.z-b.pos.z);
   b.vis = b.pdist < 90 && playerSees(b);
   const gait = r.speed || 0;
   b.walk += gait*dt*2.45;
   const u = b.mesh.userData, amp = Math.min(gait/4.6, 1), ph = b.walk;
   b.mesh.position.copy(b.pos);
-  b.mesh.rotation.y = b.yaw;
+  b.mesh.rotation.y = r.bot ? b.yaw + Math.PI : b.yaw;
+  u.gun.visible = !b.knifeOut; if(u.knife) u.knife.visible = b.knifeOut;
   u.thighL.rotation.x =  Math.sin(ph)*0.70*amp;
   u.thighR.rotation.x = -Math.sin(ph)*0.70*amp;
   u.shinL.rotation.x = Math.max(0,  Math.sin(ph-0.85))*1.05*amp + 0.05;
@@ -1658,7 +1672,7 @@ function spawnBotAt(b){
   b.nextFire = performance.now()/1000 + 0.6;    // a moment to get its bearings, not shoot on arrival
   b.yaw = Math.random()*Math.PI*2;
   b.mesh.position.copy(b.pos);                 // pose it now; botThink may not run for a while
-  b.mesh.rotation.y = b.yaw;
+  b.mesh.rotation.y = b.yaw + Math.PI;         // bots steer by (sin, cos); the model is built facing -z
   b.mesh.userData.bar.visible = false;
   b.foe = null; b.retarget = Math.random()*0.5; b.vis = false; b.pdist = 999; b.burst = 0;
 }
@@ -1927,7 +1941,8 @@ function stepFX(dt){
    viewmodel
    ============================================================ */
 const vm = { group:new THREE.Group(), current:null, models:{}, t:0,
-  lagX:0, lagY:0, lastYaw:0, lastPitch:0, boltT:0, flashT:0 };
+  lagX:0, lagY:0, lastYaw:0, lastPitch:0, boltT:0, flashT:0,
+  drawT:0, inspectT:0, slashT:0, stabT:0, slashSide:1 };
 const matGun = new THREE.MeshPhongMaterial({vertexColors:true, shininess:46, specular:0x7a838d});
 const matFlash = new THREE.MeshBasicMaterial({color:0xffe6a6, transparent:true, opacity:0, depthWrite:false, blending:THREE.AdditiveBlending});
 let scopeRT=null, scopeCam=null, scopeLive=null, scopeGlass=null, retTex=null;
@@ -1970,7 +1985,65 @@ function gc(x,y,z,r,len,c,ex){
   return o;
 }
 
+// Butterfly knife: a blade on a pivot pin and two channel handles. The "safe"
+// handle stays in your hand; the blade and the "bite" handle swing round the pin,
+// which is what the draw flip and the F inspect animate.
+const KSTEEL=0xc9d0d6, KEDGE=0xf4f7fa, KDARK=0x2a2e33, KHANDLE=0x3b3f46, KACC=0xc8354c;
+function buildKnife(){
+  const g = new THREE.Group();
+  const knife = new THREE.Group();                 // whole knife: its pose in the hand
+  const pin = new THREE.Group();                   // the pivot everything swings about
+  knife.add(pin);
+  const bladeG = new THREE.Group();
+  bladeG.add(new THREE.Mesh(mergeParts([
+    gp(0,0.000,-0.112, 0.0055,0.030,0.170, KSTEEL),              // blade body
+    gp(0,0.011,-0.205, 0.0055,0.012,0.045, KSTEEL, {rx:-0.42}),  // clip point
+    gp(0,-0.006,-0.200, 0.0055,0.020,0.050, KSTEEL, {rx:0.30}),  // belly up to the tip
+    gp(0,-0.0125,-0.110, 0.0060,0.0045,0.165, KEDGE, {flat:true}),// honed edge catches the light
+    gp(0,0.004,-0.100, 0.0062,0.006,0.090, 0x9aa3ab),            // fuller
+    gp(0,-0.003,-0.018, 0.0070,0.034,0.036, KDARK),              // tang round the pin
+    gp(0,0.0, 0.0, 0.021,0.010,0.010, 0x80888f)                  // pin head
+  ]), matGun));
+  pin.add(bladeG);
+  function handle(side){
+    const h = new THREE.Group();
+    const parts = [
+      gp(side*0.0095, 0, 0.070, 0.0070, 0.026, 0.140, KHANDLE),  // channel
+      gp(side*0.0095, 0, 0.143, 0.0080, 0.028, 0.012, KDARK),    // end cap
+      gp(side*0.0095, 0, 0.004, 0.0080, 0.030, 0.014, KDARK)     // head at the pin
+    ];
+    for(let i=0;i<5;i++) parts.push(gp(side*0.0132, 0, 0.030 + i*0.022, 0.0015, 0.011, 0.012, KDARK)); // skeleton holes
+    parts.push(gp(side*0.0133, 0.0, 0.118, 0.0014, 0.018, 0.018, KACC));                            // accent inlay
+    h.add(new THREE.Mesh(mergeParts(parts), matGun));
+    return h;
+  }
+  const safe = handle(-1), bite = handle(1);
+  pin.add(safe, bite);
+  const latch = new THREE.Mesh(mergeParts([gp(0.0, -0.013, 0.150, 0.020, 0.004, 0.022, 0x80888f)]), matGun);
+  bite.add(latch);
+  // the hand closes round the safe handle
+  const hand = new THREE.Mesh(mergeParts([
+    gp(0.004,-0.004,0.080, 0.058,0.052,0.090, GLOVE),
+    gp(-0.024,0.018,0.052, 0.022,0.020,0.030, GLOVE, {rz:0.3}),        // thumb
+    gp(0.012,-0.040,0.150, 0.080,0.090,0.200, CUFF, {rx:0.55})           // wrist and sleeve
+  ]), matGun);
+  knife.add(hand);
+  knife.scale.setScalar(1.2);                       // a touch larger than life so it reads on screen
+  knife.position.set(0.03, 0.04, -0.08);
+  knife.rotation.set(0.55, 0.45, -1.0);             // tip up and inward, flat of the blade towards you
+  g.add(knife);
+  // the frame code expects these on every weapon
+  const bolt = new THREE.Object3D(); g.add(bolt);
+  const flash = new THREE.Group(); flash.visible = false;
+  const dummy = new THREE.Mesh(new THREE.PlaneBufferGeometry(0.01,0.01), matFlash.clone());
+  flash.add(dummy); g.add(flash);
+  g.userData = {flash:flash, cone:dummy, star:dummy, bolt:bolt, boltZ:0, kind:'knife', lens:null, reticle:null,
+                knife:knife, blade:bladeG, bite:bite, safe:safe, base:{px:0.03, py:0.04, pz:-0.08, rx:0.55, ry:0.45, rz:-1.0}};
+  return g;
+}
+
 function buildGun(shape){
+  if(shape === 'knife') return buildKnife();
   const g = new THREE.Group();
   const body = [];
   let boltSpec = null, flashZ = -0.6, flashR = 0.07, optic = null;
@@ -2247,6 +2320,29 @@ function toneAt(freq, when, len, vol, type){
   o.start(t); o.stop(t + len + 0.02);
 }
 // body hit is a dull tick, head is a bright double ping, a kill adds a rising chime
+function sfxSwing(heavy){
+  if(!actx || muted || !audioOn) return;
+  const t = actx.currentTime;
+  const src = actx.createBufferSource(); src.buffer = noiseBuf;
+  const f = actx.createBiquadFilter(); f.type = 'bandpass';
+  f.frequency.setValueAtTime(heavy ? 900 : 2600, t);
+  f.frequency.exponentialRampToValueAtTime(heavy ? 300 : 700, t + (heavy ? 0.24 : 0.16));
+  const g = actx.createGain();
+  g.gain.setValueAtTime(0.0001, t);
+  g.gain.exponentialRampToValueAtTime(heavy ? 0.22 : 0.16, t + 0.03);
+  g.gain.exponentialRampToValueAtTime(0.0001, t + (heavy ? 0.28 : 0.19));
+  src.connect(f); f.connect(g); g.connect(master);
+  src.start(t); src.stop(t + 0.3);
+}
+function sfxStab(back){
+  if(!actx || muted || !audioOn) return;
+  toneAt(back ? 110 : 150, actx.currentTime, 0.09, 0.14, 'sine');
+}
+function sfxFlip(){
+  if(!actx || muted || !audioOn) return;
+  const t = actx.currentTime;
+  [0, 0.07, 0.16].forEach((d,i)=>toneAt(2400 + i*500, t + d, 0.02, 0.035, 'square'));
+}
 function sfxHit(head, killed){
   if(!actx||muted) return;
   if(head){
@@ -2431,6 +2527,7 @@ function applyDamage(victim, dmg, shooter, head){
 
 function playerShoot(now){
   const w = curW();
+  if(w.melee){ knifeAttack(now, false); return; }
   if(player.reloading>0 || !player.alive) return;
   if(now < player.nextShot) return;
   if(player.ammo[player.gun]<=0){ startReload(); return; }
@@ -2463,6 +2560,71 @@ function playerShoot(now){
   ejectShell(w.shape);
   if(player.ammo[player.gun]===0) startReload();
 }
+// ---- butterfly knife ------------------------------------------------------
+// Short reach, no ammo. A slash is quick; a stab is slow and hits harder. Either
+// one from behind is lethal. Online the hit is claimed like a shot and the
+// server checks reach, sight and the backstab itself.
+let feedWeapon = '';
+const _kd = new V3(), _ko = new V3();
+function facingOf(b){
+  // local and server bots steer by (sin, cos); players and their avatars by (-sin, -cos)
+  const human = b === player || (b.net && !b.net.bot);
+  const y = b.yaw || 0;
+  return human ? [-Math.sin(y), -Math.cos(y)] : [Math.sin(y), Math.cos(y)];
+}
+function knifeAttack(now, heavy){
+  const w = curW();
+  if(!player.alive || now < player.nextShot) return;
+  if(vm.drawT > 0.25) return;                          // still flipping it open
+  player.nextShot = now + (heavy ? 0.95 : 60/w.rpm);
+  vm.inspectT = 0;
+  if(heavy) vm.stabT = 1; else { vm.slashT = 1; vm.slashSide = -(vm.slashSide || 1); }
+  player.lastShot = now;
+  sfxSwing(heavy);
+
+  const eye = _ko.set(player.pos.x, player.pos.y + player.eye, player.pos.z);
+  const reach = w.range + (heavy ? 0.15 : 0);
+  // a slash sweeps: try the aim line and a little either side of it
+  const sweeps = heavy ? [0] : [0, 0.16, -0.16, 0.30, -0.30];
+  let best = null, bestT = reach;
+  for(const off of sweeps){
+    const d = _kd.set(0,0,-1).applyEuler(_eul.set(player.pitch, player.yaw + off, 0, 'YXZ'));
+    const wallT = (raycastWorld(eye, d, reach) || {t:reach}).t;
+    for(let i=0;i<bots.length;i++){
+      const b = bots[i]; if(!b.alive) continue;
+      const bb = botAABB(b);
+      // a little forgiveness around the body: melee should feel generous, not pixel-exact
+      const pad = 0.12;
+      const box = {mx:bb.body.mx-pad, my:bb.body.my, mz:bb.body.mz-pad, Mx:bb.body.Mx+pad, My:bb.head.My, Mz:bb.body.Mz+pad};
+      const t = rayBox(eye.x,eye.y,eye.z,d.x,d.y,d.z,box);
+      if(t > 0 && t < bestT && t < wallT){ bestT = t; best = b; }
+    }
+    if(best) break;
+    if(off === 0 && wallT < reach){                    // blade meets a wall: a spark, and that is it
+      const p = tmpB.copy(d).multiplyScalar(wallT).add(eye);
+      spark(p.x, p.y, p.z, _hit.nx, _hit.ny, _hit.nz);
+    }
+  }
+  if(!best){ if(Net.on) Net.sendShot(heavy ? 'knife2' : 'knife', []); return; }
+
+  // from behind? the target's facing and our line of attack point the same way
+  const f = facingOf(best);
+  const ax = best.pos.x - player.pos.x, az = best.pos.z - player.pos.z, al = Math.hypot(ax, az) || 1;
+  const back = (f[0]*ax + f[1]*az) / al > 0.45;
+  const hitP = tmpB.set(best.pos.x, best.pos.y + 1.2, best.pos.z);
+  impact(hitP.x, hitP.y, hitP.z, -ax/al, 0, -az/al, MODE().knock ? 'shove' : 'blood');
+  sfxStab(back);
+  if(Net.on){
+    hitMark(false, false); sfxHit(false, false);
+    Net.sendShot(heavy ? 'knife2' : 'knife', [{id: best.net ? best.net.id : 0, head:false, falloff:1, back:back}]);
+    return;
+  }
+  const dmg = (heavy ? w.heavy : w.dmg) * (back ? 2.5 : 1);
+  feedWeapon = 'knife';
+  applyDamage(best, Math.round(dmg), player, false);
+  feedWeapon = '';
+}
+
 const _r1 = new V3(), _u1 = new V3(), _up = new V3(0,1,0);
 function cone(d, spread){
   const a = Math.random()*Math.PI*2, r = Math.sqrt(Math.random())*spread;
@@ -2484,6 +2646,7 @@ function aimDir(spread){
 }
 function startReload(){
   const w = curW();
+  if(w.melee) return;
   if(player.reloading>0 || player.ammo[player.gun]===w.mag) return;
   player.reloading = w.reload;
   sfxBlip(300,.05,.05);
@@ -2493,6 +2656,7 @@ function switchGun(i){
   player.gun = i; player.reloading = 0;
   player.nextShot = performance.now()/1000 + 0.32;
   selectGunModel(i); vmSwitch = 1; exitADS();
+  if(player.loadout[i].melee){ vm.drawT = 1; vm.inspectT = 0; vm.slashT = 0; vm.stabT = 0; sfxFlip(); }
   sfxBlip(420,.04,.04);
   updateHUD(true);
 }
@@ -2650,7 +2814,7 @@ function botThink(b, dt, now, tick){
   if(Math.abs((b.pos.x+b.pos.z)-before) < dt*0.6 && speed<1.2) b.stuck += dt; else b.stuck = Math.max(0,b.stuck-dt);
 
   b.mesh.position.copy(b.pos);
-  b.mesh.rotation.y = b.yaw;
+  b.mesh.rotation.y = b.yaw + Math.PI;        // bots steer by (sin, cos); the model faces -z
   const gait = Math.hypot(b.vel.x,b.vel.z);
   b.walk += gait*dt*2.45;
   const u = b.mesh.userData;
@@ -2711,14 +2875,16 @@ function feedTag(e){
   if(e===player) return {name:'You', col:'#4fd3cc', chip:CLASS_CSS[player.cls||0], me:true};
   return {name:e.name, col:'#f2f0ea', chip:CLASS_CSS[e.cls], me:false};
 }
-function addFeed(killer, victim, head){
+const KNIFE_ICON = '<svg viewBox="0 0 24 10" width="26" height="11"><path d="M1 5.4 L10 4 L22 2.2 L23 3.4 L12 6.2 L10 6.6 Z" fill="currentColor"/><rect x="1" y="4.6" width="8" height="2.6" rx="1" fill="currentColor" opacity=".55"/></svg>';
+function addFeed(killer, victim, head, weapon){
   const k = feedTag(killer), v = feedTag(victim);
+  const knife = (weapon || feedWeapon) === 'knife';
   const row = document.createElement('div');
   row.className = 'fr' + (k.me||v.me ? ' mine' : '');
   row.innerHTML =
     `<span class="chip" style="background:${k.chip}"></span>` +
     `<span class="fn" style="color:${k.col}">${esc(k.name)}</span>` +
-    `<span class="fx${head?' hs':''}">${head?'\u2316':'\u203A'}</span>` +
+    `<span class="fx${head?' hs':''}${knife?' kn':''}">${knife ? KNIFE_ICON : (head?'\u2316':'\u203A')}</span>` +
     `<span class="fn" style="color:${v.me?'#ff6b7e':v.col}">${esc(v.name)}</span>`;
   el('feed').appendChild(row);
   feedItems.push({node:row, t:6.5});
@@ -2894,7 +3060,7 @@ function updateHUD(full){
   const cond = hp>85?'Healthy':(hp>45?'Hurt':'Critical');
   setText('vsub', !player.alive ? 'Down' : (stance ? cond+' · '+stance : cond));
   const w = curW();
-  setText('ammo', player.reloading>0 ? '—' : player.ammo[player.gun]);
+  setText('ammo', w.melee ? '\u221E' : (player.reloading>0 ? '—' : player.ammo[player.gun]));
   setText('gunname', w.name + (player.reloading>0?' · reloading':''));
   setText('mkills', player.kills);
   setText('mtarget', match.target);
@@ -3080,7 +3246,8 @@ function netSelf(){
     x: player.pos.x, y: player.pos.y, z: player.pos.z,
     yaw: player.yaw, pitch: player.pitch, cls: player.cls,
     kills: player.kills, deaths: player.deaths,
-    state: (player.alive?1:0) | (player.crouching?2:0) | (player.sliding?4:0) | (player.ads?8:0)
+    state: (player.alive?1:0) | (player.crouching?2:0) | (player.sliding?4:0) | (player.ads?8:0) |
+           (player.loadout.length && curW().melee ? 16 : 0)
   };
 }
 
@@ -3156,7 +3323,7 @@ function wireNet(){
       if(by && by !== player) by.kills++;
       if(victim && victim !== player) victim.deaths++;
       if(by === player){ player.kills++; killFlash(); sfxHit(!!m.head, true); }
-      addFeed(by === player ? player : by, victim === player ? player : victim, !!m.head);
+      addFeed(by === player ? player : by, victim === player ? player : victim, !!m.head, m.w);
       updateHUD(false);
     },
     shove(m){
@@ -3180,6 +3347,10 @@ function wireNet(){
       if(!audioOn) return;                // nobody is listening: in the menu, paused or tabbed out
       const r = Net.remote.get(m.id);
       if(!r) return;
+      if(m.w && String(m.w).indexOf('knife') === 0){           // a blade, not a gunshot
+        if(Math.hypot(camera.position.x-m.x, camera.position.z-m.z) < 14) sfxSwing(m.w === 'knife2');
+        return;
+      }
       const d = Math.hypot(camera.position.x-m.x, camera.position.z-m.z);
       if(d < 58) sfxShot(['ak','p90','awp','pump'][m.cls] || 'ak', clamp(1-d/58, .08, .75));
     },
@@ -3262,6 +3433,7 @@ document.addEventListener('mousedown', e=>{
   if(intro.active) return;                 // clicks are ignored; the flyover skips on a key
   if(e.button===0) firing = true;
   if(e.button===2){
+    if(player.loadout.length && curW().melee){ player.heavyQueued = true; return; }
     if(S.aimToggle){ if(player.ads) exitADS(); else player.ads = true; }
     else player.ads = true;
   }
@@ -3282,7 +3454,12 @@ document.addEventListener('keydown', e=>{
   if(!pointerLocked) return;
   if(intro.active && (e.code==='Space' || e.code==='Enter' || e.code==='Escape')){ endIntro(); return; }
   if(e.code==='KeyR') startReload();
-  if(e.code==='KeyQ'){ if(player.ads) exitADS(); else if(player.alive) player.ads = true; }
+  if(e.code==='KeyQ'){
+    if(player.loadout.length && curW().melee) player.heavyQueued = true;
+    else if(player.ads) exitADS(); else if(player.alive) player.ads = true;
+  }
+  if(e.code==='KeyF' && player.loadout.length && curW().melee && player.alive &&
+     vm.slashT <= 0 && vm.stabT <= 0 && vm.drawT <= 0.05) vm.inspectT = 1.9;
   if(e.code==='KeyM') toggleMute();
   if(e.code.startsWith('Digit')){
     const n = parseInt(e.code.slice(5),10)-1;
@@ -3343,7 +3520,7 @@ function updatePlayer(dt, now){
     player.eye = player.height - 0.16;
 
     // ---- ground and air movement ----
-    let speed = player.ads ? 3.4 : (player.crouching ? 3.0 : 7.0);
+    let speed = player.ads ? 3.4 : (player.crouching ? 3.0 : 7.0 * (curW().speedMul || 1));
     if(l>0.001){
       wx/=l; wz/=l;
       if(player.onGround && !player.sliding){
@@ -3386,6 +3563,10 @@ function updatePlayer(dt, now){
     if(player.reloading>0){
       player.reloading -= dt;
       if(player.reloading<=0){ player.ammo[player.gun] = w.mag; player.reloading=0; }
+    }
+    if(player.heavyQueued){
+      player.heavyQueued = false;
+      if(w.melee) knifeAttack(now, true);
     }
     if(firing && (w.auto || !player.firedThisClick)){
       if(!w.auto) player.firedThisClick = true;
@@ -3487,6 +3668,8 @@ function updatePlayer(dt, now){
     lerp(vm.group.rotation.z, player.roll*(player.ads?0.4:1.6), k)
   );
 
+  // the knife: flip open on draw, slash arcs, the stab, and F to show off
+  if(vm.current && vm.current.userData.kind === 'knife') animateKnife(vm.current.userData, dt);
   // moving parts and flash decay
   if(vm.current){
     const u = vm.current.userData;
@@ -3505,6 +3688,62 @@ function updatePlayer(dt, now){
   }
   muzzleLight.intensity = Math.max(0, muzzleLight.intensity - dt*26);
   if(muzzleLight.intensity > 0.01) muzzleLight.position.copy(muzzlePoint());
+}
+
+function easeIO(t){ return t<0.5 ? 2*t*t : 1 - Math.pow(-2*t+2, 2)/2; }
+function animateKnife(u, dt){
+  const B = u.base, K = u.knife;
+  vm.drawT   = Math.max(0, vm.drawT   - dt*1.9);
+  vm.slashT  = Math.max(0, vm.slashT  - dt*3.4);
+  vm.stabT   = Math.max(0, vm.stabT   - dt*1.8);
+  vm.inspectT= Math.max(0, vm.inspectT- dt);
+  let px = B.px, py = B.py, pz = B.pz, rx = B.rx, ry = B.ry, rz = B.rz;
+  let blade = 0, bite = 0;
+  // draw: the blade spins out of the handles one and a half times and the bite handle swings home
+  if(vm.drawT > 0){
+    const d = easeIO(vm.drawT);
+    blade = d * Math.PI * 3;
+    bite = -Math.sin(vm.drawT * Math.PI) * Math.PI * 0.95;
+    py -= d * 0.10; rx -= d * 0.5;
+  }
+  // light slash: a wide arc across the screen, alternating sides
+  if(vm.slashT > 0){
+    const p = 1 - vm.slashT, e = easeIO(p), sd = vm.slashSide;
+    const swing = Math.sin(p * Math.PI);
+    px += sd * (0.10 - e*0.28);
+    py += swing * 0.05;
+    pz -= swing * 0.10;
+    rz += sd * (0.95 - e*2.1);
+    ry += sd * (0.55 - e*1.1);
+    rx -= swing * 0.25;
+  }
+  // heavy stab: draw back, then drive it forward
+  if(vm.stabT > 0){
+    const p = 1 - vm.stabT;
+    const back = p < 0.35 ? easeIO(p/0.35) : 1 - easeIO(Math.min(1,(p-0.35)/0.25));
+    const drive = p < 0.35 ? 0 : Math.sin(Math.min(1, (p-0.35)/0.65) * Math.PI);
+    pz += back*0.07 - drive*0.24;
+    py += back*0.03 - drive*0.02;
+    rx += -back*0.35 - drive*0.30;
+    ry -= drive*0.25;
+  }
+  // inspect: roll it over in the hand, then two quick flips of the bite handle
+  if(vm.inspectT > 0){
+    const p = 1 - vm.inspectT/1.9;
+    const lift = Math.sin(Math.min(1, p*1.15) * Math.PI);
+    px -= lift*0.07; py += lift*0.06; pz -= lift*0.02;
+    rz += Math.sin(p*Math.PI) * 1.4;
+    ry -= lift*0.45;
+    if(p > 0.35 && p < 0.95){
+      const q = (p - 0.35)/0.6;
+      bite = -Math.sin(q*Math.PI*2) * Math.PI * 0.9;      // the bite handle swings out and back, twice
+      blade = easeIO(q) * Math.PI * 4;                    // while the blade rolls over twice
+    }
+  }
+  K.position.set(px, py, pz);
+  K.rotation.set(rx, ry, rz);
+  u.blade.rotation.x = blade;
+  u.bite.rotation.x = bite;
 }
 
 /* ============================================================

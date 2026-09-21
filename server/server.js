@@ -68,7 +68,10 @@ const ARMS = {
   p90:    {dmg:15,  rpm:900, pellets:1, range:80},
   deagle: {dmg:37,  rpm:220, pellets:1, range:100},
   awp:    {dmg:105, rpm:41,  pellets:1, range:260},
-  pump:   {dmg:10,  rpm:70,  pellets:8, range:40}
+  pump:   {dmg:10,  rpm:70,  pellets:8, range:40},
+  // the butterfly knife: slash and stab. Short reach; from behind it always kills.
+  knife:  {dmg:50,  rpm:115, pellets:1, range:2.3, melee:true},
+  knife2: {dmg:80,  rpm:66,  pellets:1, range:2.5, melee:true}
 };
 const HEADSHOT = 2;
 const KILL_HEAL = 15;
@@ -234,7 +237,7 @@ class Room {
   }
 
   // ---- damage -----------------------------------------------------------
-  hurt(victim, dmg, attacker, head){
+  hurt(victim, dmg, attacker, head, weapon){
     if(!victim || !victim.alive || this.over) return;
     if(!Number.isFinite(dmg) || dmg <= 0) return;
     if(this.mode.knock){
@@ -248,10 +251,10 @@ class Room {
     victim.hp -= dmg;
     this.broadcast({t:'hurt', id:victim.id, hp:Math.max(0,Math.round(victim.hp)),
                     by: attacker ? attacker.id : 0, head: !!head});
-    if(victim.hp <= 0) this.kill(victim, attacker, head);
+    if(victim.hp <= 0) this.kill(victim, attacker, head, weapon);
   }
 
-  kill(victim, attacker, head){
+  kill(victim, attacker, head, weapon){
     if(this.over || !victim.alive) return;
     victim.alive = false;
     victim.hp = 0;
@@ -262,7 +265,8 @@ class Room {
       attacker.hp = Math.min(100, attacker.hp + KILL_HEAL);
       this.broadcast({t:'heal', id:attacker.id, hp:Math.round(attacker.hp), amount:KILL_HEAL});
     }
-    this.broadcast({t:'kill', victim:victim.id, by: attacker ? attacker.id : 0, head: !!head});
+    this.broadcast({t:'kill', victim:victim.id, by: attacker ? attacker.id : 0, head: !!head,
+                    w: weapon === 'knife' ? 'knife' : undefined});
     this.checkWin();
   }
 
@@ -366,6 +370,15 @@ class Room {
     if(d < 0.001) return 0.001;
     const hit = World.raycast(this.world, fx,fy,fz, dx/d, dy/d, dz/d, d - 0.3);
     return hit < 0 ? d : -1;
+  }
+
+  // Is the attacker behind the target? Bots steer by (sin, cos) of their yaw,
+  // players report the camera's yaw, which faces (-sin, -cos).
+  behind(me, target){
+    const fx = target.bot ? Math.sin(target.yaw) : -Math.sin(target.yaw);
+    const fz = target.bot ? Math.cos(target.yaw) : -Math.cos(target.yaw);
+    const ax = target.x - me.x, az = target.z - me.z, al = Math.hypot(ax, az) || 1;
+    return (fx*ax + fz*az) / al > 0.35;
   }
 
   // Could the shooter have hit any part of the target? The client aims at whatever
@@ -621,22 +634,24 @@ wss.on('connection', (ws, req) => {
         if(bk.tok < 1) break;                         // really faster than the gun can fire
         bk.tok -= 1;
         me.lastShot = t;
-        room.broadcast({t:'fire', id:me.id, cls:me.cls, x:me.x, y:me.y+1.5, z:me.z, yaw:me.yaw}, me.id);
+        room.broadcast({t:'fire', id:me.id, cls:me.cls, x:me.x, y:me.y+1.5, z:me.z, yaw:me.yaw, w:m.w}, me.id);
         if(!Array.isArray(m.hits)) break;
         for(const h of m.hits.slice(0, arm.pellets)){
           if(!h || typeof h !== 'object') continue;
           const target = room.byId(h.id|0);
           if(!target || !target.alive || target === me) continue;
           const d = Math.hypot(target.x-me.x, target.y-me.y, target.z-me.z);
-          if(d > arm.range + 5) continue;                       // out of the weapon's reach
+          // a blade gets a little slack for lag (people move ~1 m in the time a packet takes)
+          if(d > arm.range + (arm.melee ? 1.6 : 5)) continue;   // out of the weapon's reach
           if(!room.lineOfFire(me, target, arm.range+5)) continue;
-          let dmg = arm.dmg * (h.head ? HEADSHOT : 1);
+          let dmg = arm.dmg * (h.head && !arm.melee ? HEADSHOT : 1);
           const fo = +h.falloff;
-          if(Number.isFinite(fo) && fo > 0) dmg *= clamp(fo, 0.3, 1);
+          if(!arm.melee && Number.isFinite(fo) && fo > 0) dmg *= clamp(fo, 0.3, 1);
+          if(arm.melee && h.back && room.behind(me, target)) dmg *= 2.5;   // checked here, not trusted
           if(room.mode.knock){
             room.shove(target, me.x, me.z, arm.dmg*(arm.pellets>1?1:2.2), me);
           } else {
-            room.hurt(target, dmg, me, !!h.head);
+            room.hurt(target, dmg, me, !!h.head && !arm.melee, arm.melee ? 'knife' : m.w);
           }
         }
         break;
