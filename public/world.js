@@ -123,9 +123,11 @@ function cityMap(o){
     buildings.push(b); return buildings.length-1;
   }
   const tag = (i0,bid)=>{ for(let i=i0;i<s.length;i++) if(s[i].bid===undefined) s[i].bid=bid; };
+  const foot = [], crates = [];          // remembered for street dressing at the end
 
   // the walls around the district are buildings too, so the edge reads as more city
-  const i0 = s.length; perimeter(s, half, 12.9, 0); tag(i0, newBuilding(4, 1));
+  // style 4 is a plain facade whose street level carries shutters, posters and tags
+  const i0 = s.length; perimeter(s, half, 12.9, 0); tag(i0, newBuilding(4, 4));
 
   const span = half*2 - 6;
   let n = Math.max(2, Math.round((span + 5)/(block + 5)));
@@ -272,6 +274,7 @@ function cityMap(o){
         }
       }
     });
+    foot.push({cx, cz, bw, bd, floors, k:k.slice(), storeyTop, style:st, stair:!!(opts && opts.stair)});
     if(opts && opts.stair){
       const f = roofStair(s, cx, cz, bw, 4.1, R);
       claim(f.x, f.z, f.w, f.d);                          // the stair owns its patch of street
@@ -374,7 +377,14 @@ function cityMap(o){
     s.push(D(x+sx-0.45*Math.sign(sx), 5.2, z+sz, 0.9,0.1,0.12, 2));
     emissive(x+sx-0.8*Math.sign(sx), 5.05, z+sz, 0.5,0.18,0.28, LAMP);
     lights.push({x:x+sx-0.8*Math.sign(sx), z:z+sz, r:11, c:[0.80,0.69,0.46]});
-    if(R()<.4) s.push(D(x+sx*0.7, 0, z+sz*0.7, 0.3,0.75,0.3, 3, {tint:[0.75,0.15,0.12]}));
+    if(R()<.4){                                              // fire hydrant
+      const hx = x+sx*0.7, hz = z+sz*0.7, red = {tint:[0.78,0.14,0.11]};
+      s.push(D(hx, 0, hz, 0.34, 0.08, 0.34, 3, red));
+      s.push(D(hx, 0.08, hz, 0.24, 0.48, 0.24, 3, red));
+      s.push(D(hx, 0.56, hz, 0.30, 0.07, 0.30, 3, red));
+      s.push(D(hx, 0.63, hz, 0.16, 0.10, 0.16, 3, {tint:[0.86,0.74,0.20]}));
+      s.push(D(hx, 0.34, hz, 0.42, 0.10, 0.10, 3, {tint:[0.86,0.74,0.20]}));
+    }
     if(R()<.45 && fits(x-sx, z-sz, 1.0, 1.0, 0.25)){     // traffic signal opposite
       claim(x-sx, z-sz, 1.0, 1.0);
       s.push(D(x-sx, 0, z-sz, 0.16,3.4,0.16, 2));
@@ -433,6 +443,7 @@ function cityMap(o){
     if(!placed) continue;
     claim(x, z, 2.0, 2.0);
     s.push(B(x, 0, z, 1.5,1.2,1.5, 3, {tint:[0.62,0.50,0.34], ry:R()*0.6}));
+    crates.push([x, z]);
   }
   // skyline past the walls: more of the same city fading out
   for(let i=0;i<46;i++){
@@ -442,10 +453,157 @@ function cityMap(o){
     s.push(D(Math.cos(a)*rr, -1, Math.sin(a)*rr, bw, fl*3.2+1.5, bw, 0, {bid:bid}));
     s.push(D(Math.cos(a)*rr, fl*3.2+0.5, Math.sin(a)*rr, bw+0.6, 0.4, bw+0.6, 2));
   }
+  dressStreets(s, foot, crates, o.seed, D, NEON);
   return {name:o.name, half:half, sky:o.sky, skyTop:o.skyTop, skyBot:o.skyBot, ground:o.ground,
           fogNear:o.fogNear, boxes:s, buildings:buildings, spawns:[], lights:lights,
           grid:{first:first, pitch:pitch, block:block, n:n, inset:inset},
+          classStyle:{4:9},                   // foliage (visual only)
           palette:[0xd6d2c9, 0xc8c2b6, 0x363b42, 0xffffff, 0x527d3c, 0x8ea7b6]};
+}
+
+// ---------------------------------------------------------------------------
+// Street dressing: benches, bins, planters, vending machines, AC units, cones and
+// strings of festoon lights. Pure decoration — nothing here collides, nothing is
+// tall enough to block a sightline, and it rolls its own dice so the layout of
+// every map (and therefore the server's copy of it) is exactly what it was.
+// ---------------------------------------------------------------------------
+function dressStreets(s, foot, crates, seed, D, NEON){
+  const P = rng((seed*7 + 13) >>> 0);
+  const pick = a => a[(P()*a.length)|0];
+  const placed = [];
+  // clear of every existing box (solid or not) and of what we already put down
+  const free = (x0,z0,x1,z1,y0,y1)=>{
+    for(let i=0;i<s.length;i++){
+      const b = s[i];
+      if(y0 >= b.y+b.h || y1 <= b.y) continue;
+      if(x0 < b.x+b.w/2 && x1 > b.x-b.w/2 && z0 < b.z+b.d/2 && z1 > b.z-b.d/2) return false;
+    }
+    for(let i=0;i<placed.length;i++){
+      const r = placed[i];
+      if(x0 < r[2] && x1 > r[0] && z0 < r[3] && z1 > r[1]) return false;
+    }
+    return true;
+  };
+  const WOOD = [[0.55,0.38,0.24],[0.48,0.33,0.22],[0.62,0.45,0.30]];
+  const BIN  = [[0.16,0.28,0.22],[0.20,0.22,0.26],[0.36,0.20,0.16]];
+  const VEND = [[0.72,0.14,0.16],[0.16,0.34,0.62],[0.92,0.62,0.12],[0.18,0.52,0.36]];
+
+  foot.forEach(f=>{
+    [[0,0,-1],[1,0,1],[2,-1,0],[3,1,0]].forEach(([fi,dx,dz])=>{
+      if(f.stair && fi === 3) return;                          // the roof stair lives there
+      const len = dx ? f.bd : f.bw;
+      const face = (dx ? f.bw : f.bd)/2 + 0.35;                // outer face of the ground floor wall
+      const door = f.k[fi] === 'door';
+      const slots = Math.max(1, Math.floor((len - 3.2) / 3.0));
+      for(let n=0; n<slots; n++){
+        if(P() > 0.46) continue;
+        let off = (P()-0.5) * (len - 3.2);
+        if(door && Math.abs(off) < 2.8) continue;               // keep the doorway clear
+        const kind = P();
+        // local frame: `a` runs along the wall, `o` points out into the street
+        const at = (a, o) => [f.cx + dx*(face+o) + (dz?a:0), f.cz + dz*(face+o) + (dx?a:0)];
+        const box = (a, o, y, la, lo, h, c, ex)=>{
+          const [x,z] = at(a, o);
+          s.push(D(x, y, z, dx?lo:la, h, dz?lo:la, c, ex));
+        };
+        const fits = (la, lo, h)=>{
+          const [x,z] = at(off, lo/2 + 0.05);
+          const hw = (dx?lo:la)/2, hd = (dz?lo:la)/2;
+          if(!free(x-hw, z-hd, x+hw, z+hd, 0.02, h)) return false;
+          placed.push([x-hw-0.2, z-hd-0.2, x+hw+0.2, z+hd+0.2]);
+          return true;
+        };
+        if(kind < 0.30){                                        // bench, back to the wall
+          if(!fits(1.8, 0.62, 1.0)) continue;
+          const w = pick(WOOD);
+          box(off, 0.34, 0.42, 1.7, 0.46, 0.07, 3, {tint:w});                 // seat
+          box(off, 0.10, 0.52, 1.7, 0.06, 0.40, 3, {tint:w});                 // backrest
+          box(off-0.72, 0.30, 0, 0.07, 0.40, 0.42, 2);                        // legs
+          box(off+0.72, 0.30, 0, 0.07, 0.40, 0.42, 2);
+        } else if(kind < 0.52){                                 // bin, sometimes with a bag beside it
+          if(!fits(1.1, 0.6, 1.0)) continue;
+          box(off, 0.30, 0, 0.50, 0.50, 0.86, 3, {tint:pick(BIN)});
+          box(off, 0.30, 0.86, 0.56, 0.56, 0.06, 2);
+          if(P() < 0.5) box(off+0.55, 0.26, 0, 0.36, 0.34, 0.34, 3, {tint:[0.10,0.10,0.11]});
+        } else if(kind < 0.72){                                 // planter with a shrub
+          if(!fits(1.5, 0.62, 1.0)) continue;
+          box(off, 0.31, 0, 1.40, 0.56, 0.48, 1);
+          box(off, 0.31, 0.48, 1.26, 0.46, 0.46, 4, {tint:[0.62,0.95,0.55]});
+        } else if(kind < 0.86){                                 // vending machine, lit at night
+          if(!fits(0.9, 0.62, 1.4)) continue;
+          const v = pick(VEND);
+          box(off, 0.30, 0, 0.78, 0.56, 1.36, 3, {tint:v});
+          box(off, 0.59, 0.52, 0.56, 0.02, 0.62, 3, {style:6, tint:[0.80,0.92,1.00]});
+          box(off, 0.59, 0.28, 0.40, 0.02, 0.10, 2);
+        } else {                                                // stacked pallets and a box
+          if(!fits(1.3, 1.2, 1.1)) continue;
+          box(off, 0.60, 0, 1.2, 1.0, 0.14, 3, {tint:[0.64,0.50,0.32]});
+          box(off, 0.60, 0.14, 1.2, 1.0, 0.14, 3, {tint:[0.60,0.47,0.30]});
+          box(off+(P()-.5)*0.3, 0.60, 0.28, 0.66, 0.60, 0.58, 3, {tint:[0.70,0.58,0.40], ry:P()*0.4});
+        }
+      }
+      // air-conditioning boxes bolted to the storeys above
+      if(f.floors > 1 && f.style !== 3){
+        for(let fl=2; fl<=f.floors; fl++){
+          const y = 4.6 + (fl-2)*3.2 + 0.25;
+          if(y + 0.7 > f.storeyTop || P() > 0.42) continue;
+          const a = (P()-0.5)*(len-4);
+          const [x,z] = [f.cx + dx*(face+0.36) + (dz?a:0), f.cz + dz*(face+0.36) + (dx?a:0)];
+          if(!free(x-0.5, z-0.5, x+0.5, z+0.5, y-0.1, y+0.7)) continue;
+          s.push(D(x, y, z, dx?0.46:0.86, 0.58, dz?0.46:0.86, 3, {tint:[0.80,0.81,0.80]}));
+          s.push(D(x + dx*0.24, y+0.12, z + dz*0.24, dx?0.02:0.52, 0.34, dz?0.02:0.52, 2));  // grille
+        }
+      }
+    });
+  });
+
+  // cones around the street works
+  crates.forEach(([x,z])=>{
+    for(let c=0;c<3;c++){
+      if(P() < 0.35) continue;
+      const a = P()*Math.PI*2, r = 1.5 + P()*0.6;
+      const cx = x + Math.cos(a)*r, cz = z + Math.sin(a)*r;
+      if(!free(cx-0.2, cz-0.2, cx+0.2, cz+0.2, 0, 0.6)) continue;
+      placed.push([cx-0.25, cz-0.25, cx+0.25, cz+0.25]);
+      s.push(D(cx, 0, cz, 0.38, 0.04, 0.38, 2));
+      s.push(D(cx, 0.04, cz, 0.24, 0.30, 0.24, 3, {tint:[0.95,0.42,0.10]}));
+      s.push(D(cx, 0.22, cz, 0.25, 0.07, 0.25, 3, {tint:[0.96,0.96,0.94]}));
+      s.push(D(cx, 0.34, cz, 0.13, 0.18, 0.13, 3, {tint:[0.95,0.42,0.10]}));
+    }
+  });
+
+  // festoon lights strung across the street between facing storeys
+  let strings = 0;
+  for(let i=0;i<foot.length && strings < 7;i++){
+    const A = foot[i];
+    if(A.floors < 2) continue;
+    for(let j=0;j<foot.length && strings < 7;j++){
+      if(i === j) continue;
+      const Bf = foot[j];
+      if(Bf.floors < 2 || P() > 0.5) continue;
+      // facing along x: A's east face to B's west face
+      const gapX = (Bf.cx - Bf.bw/2) - (A.cx + A.bw/2);
+      const ovZ0 = Math.max(A.cz - A.bd/2, Bf.cz - Bf.bd/2) + 1.5, ovZ1 = Math.min(A.cz + A.bd/2, Bf.cz + Bf.bd/2) - 1.5;
+      const gapZ = (Bf.cz - Bf.bd/2) - (A.cz + A.bd/2);
+      const ovX0 = Math.max(A.cx - A.bw/2, Bf.cx - Bf.bw/2) + 1.5, ovX1 = Math.min(A.cx + A.bw/2, Bf.cx + Bf.bw/2) - 1.5;
+      let x0, x1, z0, z1, alongX;
+      if(gapX > 3 && gapX < 14 && ovZ1 > ovZ0){ alongX = true;  x0 = A.cx + A.bw/2 + 0.5; x1 = Bf.cx - Bf.bw/2 - 0.5; z0 = z1 = ovZ0 + P()*(ovZ1-ovZ0); }
+      else if(gapZ > 3 && gapZ < 14 && ovX1 > ovX0){ alongX = false; z0 = A.cz + A.bd/2 + 0.5; z1 = Bf.cz - Bf.bd/2 - 0.5; x0 = x1 = ovX0 + P()*(ovX1-ovX0); }
+      else continue;
+      const y = 6.2 + P()*0.6;
+      const L = alongX ? x1-x0 : z1-z0, mx = (x0+x1)/2, mz = (z0+z1)/2;
+      if(!free(mx - (alongX?L/2:0.2), mz - (alongX?0.2:L/2), mx + (alongX?L/2:0.2), mz + (alongX?0.2:L/2), y-0.6, y+0.2)) continue;
+      s.push(D(mx, y, mz, alongX?L:0.03, 0.03, alongX?0.03:L, 2));
+      const col = pick([[1.00,0.80,0.46],[1.00,0.86,0.58]]);
+      const bulbs = Math.floor(L/1.1);
+      for(let b=1;b<bulbs;b++){
+        const t = b/bulbs, sag = Math.sin(t*Math.PI)*0.45;
+        const bx = alongX ? x0 + t*L : mx, bz = alongX ? mz : z0 + t*L;
+        s.push(D(bx, y - sag - 0.14, bz, 0.12, 0.14, 0.12, 3, {style:6, tint:col}));
+      }
+      strings++;
+    }
+  }
 }
 
 // the knockback arena: a real island — grass on top, dirt under it, rock all the way down
@@ -475,8 +633,8 @@ function arenaMap(){
   }
   cells.forEach(([i,j,x,z,d])=>{
     const v = rnd();
-    const g = 0.30 + v*0.12;                                   // grass, patchy
-    s.push(B(x, TOP-1.0, z, cell+0.06, 1.0, cell+0.06, 0, {tint:[g*0.70, g*1.35, g*0.52]}));
+    const g = 0.345 + v*0.035;                                 // grass: the shader does the patchiness
+    s.push(B(x, TOP-1.0, z, cell+0.06, 1.0, cell+0.06, 0, {tint:[g*0.84, g*1.00, g*0.52], style:7}));
     const e = 0.40 + rnd()*0.10;                               // dirt directly beneath
     s.push(D(x, TOP-3.6, z, cell+0.03, 2.6, cell+0.03, 1, {tint:[e, e*0.72, e*0.48]}));
   });
@@ -579,7 +737,8 @@ function arenaMap(){
   return {name:'Skyfall', half:60, fogNear:30, boxes:s, buildings:buildings, spawns:spawns, lights:lights,
           grid:{first:0, pitch:1, block:1, n:0, inset:0}, ground:0x2a2f36,
           voidBelow:true, navY:TOP+0.05, spawnY:TOP+0.4,
-          palette:[0x8fbf6a, 0xb9a487, 0x6e6a63, 0xffffff, 0x63a844, 0x8ea7b6]};
+          classStyle:{1:8, 2:8, 4:9},         // earth and rock, stone, foliage (visual only)
+          palette:[0x7fa85e, 0xb9a487, 0x6e6a63, 0xffffff, 0x63a844, 0x8ea7b6]};
 }
 const ARENA = arenaMap();
 

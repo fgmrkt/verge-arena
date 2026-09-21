@@ -228,6 +228,12 @@
   .isub{margin-top:.55rem;font-size:1rem;color:rgba(242,240,234,.72)}
   .iskip{position:absolute;right:8%;bottom:20%;font-size:.78rem;color:rgba(242,240,234,.35);opacity:0}
   #fps{position:absolute;left:1.2rem;top:.9rem;font-size:.78rem;color:rgba(242,240,234,.55)}
+  #vignette{position:absolute;inset:0;pointer-events:none;
+    background:radial-gradient(ellipse at center, rgba(0,0,0,0) 58%, rgba(6,9,14,.30) 100%)}
+  #hurtdir{position:absolute;left:50%;top:50%;width:0;height:0}
+  #hurtdir i{position:absolute;left:-90px;top:-90px;width:180px;height:180px;border-radius:50%;
+    border:5px solid transparent;border-top-color:rgba(232,44,62,.9);opacity:0;
+    filter:drop-shadow(0 0 6px rgba(232,44,62,.7));transition:none}
   #mutebadge{position:absolute;left:1.2rem;top:2.3rem;display:flex;align-items:center;gap:.45rem;
     padding:.32rem .6rem .32rem .5rem;border-radius:3px;background:rgba(226,59,87,.88);
     color:#fff;font-size:.8rem;font-weight:600;box-shadow:0 4px 14px rgba(0,0,0,.25)}
@@ -292,6 +298,7 @@
 
 <!-- HUD -->
 <div id="hud" class="layer hidden">
+  <div id="vignette"></div>
   <div id="dmg"></div>
   <div id="blood"></div>
   <div id="blood2"></div>
@@ -311,6 +318,7 @@
   </div>
   <div id="feed"></div>
   <div id="fps"></div>
+  <div id="hurtdir"><i></i><i></i><i></i><i></i></div>
   <div id="mutebadge" class="hidden"><span id="mutebadgeicon"></span>Muted <kbd>M</kbd></div>
   <div id="soundtoast"></div>
   <div class="corner" id="vitals">
@@ -479,15 +487,15 @@ const TOD = [
   {name:'Day',   night:0.0,
    skyTop:0x5b8fc4, skyBot:0xe8eef2, fog:0xdbe3ea, fogMul:1.00, exposure:1.18,
    sun:[0xfff1d6,1.05], hemi:[0xcfe2f2,0x676c74,0.58], fill:[0x9fb6cc,0.30],
-   sunDir:[0.52,0.80,0.30], stars:0},
+   sunDir:[0.52,0.80,0.30], stars:0, clouds:0.55},
   {name:'Dusk',  night:0.55,
-   skyTop:0x2d3f6b, skyBot:0xe0834a, fog:0xa87a6a, fogMul:0.80, exposure:1.32,
-   sun:[0xff9d55,0.62], hemi:[0x6b7ba8,0x3a3230,0.40], fill:[0x8a6ea8,0.22],
-   sunDir:[0.92,0.16,0.28], stars:0.35},
+   skyTop:0x2d3f6b, skyBot:0xe0834a, fog:0xa87a6a, fogMul:0.80, exposure:1.36,
+   sun:[0xff9d55,0.78], hemi:[0x7584b0,0x4a3a34,0.56], fill:[0x8a6ea8,0.30],
+   sunDir:[0.92,0.16,0.28], stars:0.35, clouds:0.70},
   {name:'Night', night:1.0,
-   skyTop:0x070d1c, skyBot:0x1d2c47, fog:0x141d2e, fogMul:0.66, exposure:1.55,
-   sun:[0x8fa8d8,0.16], hemi:[0x28354f,0x0d1118,0.34], fill:[0x3d5480,0.14],
-   sunDir:[-0.45,0.72,-0.30], stars:1}
+   skyTop:0x070d1c, skyBot:0x1d2c47, fog:0x141d2e, fogMul:0.66, exposure:1.60,
+   sun:[0x9fb6e6,0.34], hemi:[0x3e5078,0x1a2130,0.66], fill:[0x4a64a0,0.26],
+   sunDir:[-0.45,0.72,-0.30], stars:1, clouds:0.30}
 ];
 const QUALITY = [
   {name:'Light',   dpr:0.80, shadow:512,  fog:110, fx:0.6},
@@ -588,8 +596,8 @@ scene.add(muzzleLight);
 // the gun renders in its own pass at a fixed field of view, so zooming never inflates it
 const vmScene = new THREE.Scene();
 const vmCam = new THREE.PerspectiveCamera(56, 1, 0.08, 12);
-vmScene.add(new THREE.HemisphereLight(0xe6f0fa, 0x4e545c, 1.05));
-const vmKey = new THREE.DirectionalLight(0xfff4e2, 0.95); vmKey.position.set(0.45,0.9,0.55);
+vmScene.add(new THREE.HemisphereLight(0xe6f0fa, 0x3e444c, 0.82));
+const vmKey = new THREE.DirectionalLight(0xfff4e2, 1.18); vmKey.position.set(0.45,0.9,0.55);
 const vmRim = new THREE.DirectionalLight(0x8fb4dc, 0.60); vmRim.position.set(-0.7,0.15,-0.6);
 vmScene.add(vmKey, vmRim);
 
@@ -655,18 +663,76 @@ function makeStars(amount){
     transparent:true, opacity:0.55+0.45*amount, depthWrite:false}));
 }
 
-// a vertical gradient dome — one draw call, no texture, and it tracks the horizon properly
-function makeSky(topHex, botHex){
-  const g = new THREE.SphereBufferGeometry(280, 18, 10);
-  const pos = g.attributes.position, col = new Float32Array(pos.count*3);
-  const top = new THREE.Color(topHex), bot = new THREE.Color(botHex), c = new THREE.Color();
-  for(let i=0;i<pos.count;i++){
-    const t = clamp(pos.getY(i)/280*1.6 + 0.30, 0, 1);
-    c.copy(bot).lerp(top, t*t);
-    col[i*3]=c.r; col[i*3+1]=c.g; col[i*3+2]=c.b;
-  }
-  g.setAttribute('color', new THREE.BufferAttribute(col,3));
-  return new THREE.Mesh(g, new THREE.MeshBasicMaterial({vertexColors:true, side:THREE.BackSide, fog:false, depthWrite:false}));
+// The sky is one dome and one shader: gradient, sun (or moon) with a soft halo,
+// clouds drifting on a high plane, and — for the floating island — a sea of cloud
+// far below. No textures; the clouds are noise evaluated per pixel.
+function makeSky(T, cloudSea){
+  const g = new THREE.SphereBufferGeometry(280, 32, 16);
+  const mat = new THREE.ShaderMaterial({
+    uniforms:{
+      uTop:{value:new THREE.Color(T.skyTop)}, uBot:{value:new THREE.Color(T.skyBot)},
+      uFog:{value:new THREE.Color(T.fog)}, uSunCol:{value:new THREE.Color(T.sun[0])},
+      uSun:{value:SUN_DIR.clone()}, uNight:{value:T.night}, uTime:{value:0},
+      uCloud:{value:T.clouds || 0.5}, uSea:{value:cloudSea ? 1 : 0}
+    },
+    vertexShader:`varying vec3 vDir;
+      void main(){ vDir = position; gl_Position = projectionMatrix * modelViewMatrix * vec4(position,1.0); }`,
+    fragmentShader:`
+      uniform vec3 uTop, uBot, uFog, uSunCol, uSun; uniform float uNight, uTime, uCloud, uSea;
+      varying vec3 vDir;
+      // hash without sin(): sin() of large numbers is imprecise on many GPUs, which made
+// some windows flicker between lit and dark pixel by pixel
+float fh(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
+      float fnoise(vec2 p){
+        vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
+        return mix(mix(fh(i),fh(i+vec2(1,0)),f.x), mix(fh(i+vec2(0,1)),fh(i+vec2(1,1)),f.x), f.y);
+      }
+      float fbm(vec2 p){ float a=0.5, s=0.0; for(int i=0;i<5;i++){ s+=a*fnoise(p); p=p*2.03+vec2(1.7,9.2); a*=0.5; } return s; }
+      void main(){
+        vec3 d = normalize(vDir);
+        float h = d.y;
+        float t = clamp(h*1.6 + 0.30, 0.0, 1.0);
+        vec3 col = mix(uBot, uTop, t*t);
+        vec3 sd3 = normalize(uSun);
+        float sd = max(dot(d, sd3), 0.0);
+        float day = 1.0 - uNight;
+        // sun, or at night a smaller, cooler moon
+        float disc = smoothstep(0.9990 - 0.0006*uNight, 0.9996 - 0.0004*uNight, sd);
+        col += uSunCol * disc * (2.6*day + 0.9*uNight);
+        col += uSunCol * (pow(sd, 10.0)*0.20*day + pow(sd, 3.0)*0.06*day + pow(sd, 60.0)*0.10*uNight);
+        // haze band along the horizon
+        col = mix(col, uFog, (1.0 - smoothstep(-0.02, 0.20, h)) * 0.55);
+        // clouds on a high plane
+        if(h > 0.0){
+          vec2 p = d.xz / (h + 0.10) * 1.7 + vec2(uTime*0.010, uTime*0.004);
+          float n = fbm(p);
+          float c = smoothstep(0.62 - uCloud*0.22, 0.92, n) * smoothstep(0.0, 0.16, h);
+          float lit = fbm(p + sd3.xz*0.18);                       // lighter towards the sun
+          vec3 cc = mix(vec3(1.0), uSunCol, 0.30) * (0.78 + 0.34*smoothstep(0.30, 0.80, n - lit + 0.5));
+          cc += uSunCol * pow(sd, 6.0) * 0.35 * day;             // silver lining
+          cc = mix(cc, uTop*1.6 + vec3(0.06,0.07,0.10), uNight*0.82);
+          col = mix(col, cc, c * (0.88 - 0.30*uNight));
+        }
+        // below the horizon
+        if(h < 0.0){
+          vec3 low = uFog * 0.96;
+          if(uSea > 0.5){
+            vec2 p = d.xz / (-h + 0.06) * 1.1 + vec2(uTime*0.006, 0.0);
+            float n = fbm(p);
+            vec3 sea = mix(uFog*0.80, mix(vec3(1.0), uSunCol, 0.25)*(1.0-0.55*uNight) + uFog*0.2, smoothstep(0.35, 0.75, n));
+            low = mix(low, sea, smoothstep(0.0, -0.10, h));
+          }
+          col = mix(col, low, smoothstep(0.0, -0.06, h));
+        }
+        gl_FragColor = vec4(col, 1.0);
+        #include <tonemapping_fragment>
+        #include <encodings_fragment>
+      }`,
+    side:THREE.BackSide, depthWrite:false, fog:false
+  });
+  const m = new THREE.Mesh(g, mat);
+  m.renderOrder = -1;
+  return m;
 }
 
 // ---------------------------------------------------------------------------
@@ -674,16 +740,19 @@ function makeSky(topHex, botHex){
 // asphalt and paving are all computed from world position in the fragment shader.
 // ---------------------------------------------------------------------------
 const GLSL_NOISE = `
-float fh(vec2 p){ return fract(sin(dot(p, vec2(127.1,311.7))) * 43758.5453); }
+// hash without sin(): sin() of large numbers is imprecise on many GPUs, which made
+// some windows flicker between lit and dark pixel by pixel
+float fh(vec2 p){ vec3 p3 = fract(vec3(p.xyx) * 0.1031); p3 += dot(p3, p3.yzx + 33.33); return fract((p3.x + p3.y) * p3.z); }
 float fnoise(vec2 p){
   vec2 i=floor(p), f=fract(p); f=f*f*(3.0-2.0*f);
   return mix(mix(fh(i),fh(i+vec2(1,0)),f.x), mix(fh(i+vec2(0,1)),fh(i+vec2(1,1)),f.x), f.y);
 }`;
 
-function facadeMaterial(baseHex, night){
+function facadeMaterial(baseHex, night, moss){
   const mat = new THREE.MeshLambertMaterial({color:baseHex, vertexColors:true});
   mat.onBeforeCompile = sh => {
     sh.uniforms.uNight = {value: night};
+    sh.uniforms.uMoss = {value: moss || 0};
     sh.vertexShader = `
       attribute vec4 aFa; attribute vec4 aFb;
       varying vec3 vWp; varying vec3 vNw; varying vec4 vFa; varying vec4 vFb;
@@ -700,7 +769,7 @@ function facadeMaterial(baseHex, night){
         vWp = wp.xyz; vFa = aFa; vFb = aFb;
       }`);
     sh.fragmentShader = `
-      uniform float uNight;
+      uniform float uNight; uniform float uMoss;
       varying vec3 vWp; varying vec3 vNw; varying vec4 vFa; varying vec4 vFb;
       vec3 gEmis = vec3(0.0);
       ${GLSL_NOISE}
@@ -713,9 +782,51 @@ function facadeMaterial(baseHex, night){
           gEmis = vFa.rgb * (0.30 + 2.30*uNight);
           return vFa.rgb * (0.65 + 0.35*uNight);
         }
-        if(style > 5.5){
+        if(style > 5.5 && style < 6.5){
           gEmis = vFa.rgb * (0.08 + 1.70*uNight);
           return vFa.rgb;
+        }
+        // style 7: turf. Mottled on top, a grass lip over bare earth on the sides.
+        if(style > 6.5 && style < 7.5){
+          float top = vFb.z;
+          vec2 q = vWp.xz;
+          if(n.y > 0.5){
+            float big = fnoise(q*0.16), mid = fnoise(q*0.9), fine = fnoise(q*5.5), blade = fnoise(q*18.0);
+            vec3 g = col * (0.70 + 0.42*big) * (0.84 + 0.24*mid) * (0.90 + 0.16*fine) * (0.94 + 0.10*blade);
+            g = mix(g, g*vec3(1.22,1.08,0.70), smoothstep(0.55, 0.85, big)*0.55);   // dry, sunny patches
+            // scattered flowers
+            vec2 fc = floor(q*2.6); float fr = fh(fc);
+            vec2 fo = fract(q*2.6) - 0.5;
+            float dot2 = step(0.985, fr) * (1.0 - smoothstep(0.10, 0.16, length(fo)));
+            vec3 fcol = mix(vec3(1.0,0.95,0.80), mix(vec3(1.0,0.85,0.25), vec3(0.95,0.45,0.70), step(0.993, fr)), step(0.989, fr));
+            return mix(g, fcol, dot2);
+          }
+          float u2 = (n.x > n.z) ? vWp.z : vWp.x;
+          float lip = smoothstep(0.30, 0.18, top - vWp.y + 0.05*fnoise(vec2(u2*3.0, 0.0)));
+          vec3 earth = vec3(0.42,0.30,0.20) * (0.80 + 0.30*fnoise(vec2(u2*1.3, vWp.y*4.0)));
+          return mix(earth, col*0.85, lip);
+        }
+        // style 8: earth and rock. Layered strata, flecks, darker further down.
+        if(style > 7.5 && style < 8.5){
+          float u2 = (n.x > n.z) ? vWp.z : vWp.x;
+          if(n.y > 0.5) u2 = vWp.x + vWp.z*0.7;
+          float strata = fnoise(vec2(u2*0.18, vWp.y*1.6)) * 0.6 + fnoise(vec2(u2*0.9, vWp.y*5.0)) * 0.4;
+          vec3 r = col * (0.74 + 0.40*strata);
+          r *= 0.92 + 0.10*fnoise(vWp.xz*7.0 + vWp.y*5.0);
+          r = mix(r, r*vec3(0.80,0.84,0.90), smoothstep(0.62, 0.9, fnoise(vec2(u2*0.5, vWp.y*0.4))));
+          // moss creeps over the tops of stones and down the first few centimetres
+          float mossN = fnoise(vWp.xz*1.3 + vWp.y);
+          float mossAmt = (n.y > 0.5 ? smoothstep(0.55, 0.80, mossN) : smoothstep(0.10, 0.0, vFb.z - vWp.y) * smoothstep(0.55, 0.8, mossN)) * uMoss;
+          r = mix(r, vec3(0.34,0.42,0.22) * (0.8 + 0.3*fnoise(vWp.xz*6.0)), mossAmt*0.55);
+          return r;
+        }
+        // style 9: foliage. Clumped light and shade so a canopy is not one flat block.
+        if(style > 8.5 && style < 9.5){
+          vec3 q3 = vWp * 2.3;
+          float leaf = fnoise(q3.xz + q3.y*1.7) * 0.6 + fnoise(q3.xy*1.9 + q3.z) * 0.4;
+          vec3 f = col * (0.70 + 0.52*leaf);
+          f *= 0.86 + 0.26*smoothstep(-0.2, 0.9, vNw.y);          // lit from above
+          return f;
         }
         float grain = fnoise(vWp.xz*6.0 + vWp.y*3.0);
         col *= 0.93 + 0.10*grain;
@@ -732,8 +843,9 @@ function facadeMaterial(baseHex, night){
           float brick = step(0.08, fract(v*6.0)) * step(0.07, fract(u*2.2 + fract(row*0.5)));
           col *= 0.84 + 0.16*brick;
         }
+        bool glassy = style > 2.5 && style < 3.5;
         float wx0=0.24, wx1=0.76, wy0=0.34, wy1=0.78;
-        if(style > 2.5){ wx0=0.14; wx1=0.86; wy0=0.26; wy1=0.90; }
+        if(glassy){ wx0=0.14; wx1=0.86; wy0=0.26; wy1=0.90; }
         float inWin = step(wx0,fx)*step(fx,wx1)*step(wy0,fy)*step(fy,wy1);
         if(v < 3.2 || v > hmax) inWin = 0.0;
         float frame = step(wx0-0.05,fx)*step(fx,wx1+0.05)*step(wy0-0.06,fy)*step(fy,wy1+0.06) - inWin;
@@ -741,7 +853,7 @@ function facadeMaterial(baseHex, night){
         float pane = fh(vec2(fi, ci) + seed);
         vec3 glass = mix(vec3(0.17,0.22,0.27), vec3(0.58,0.66,0.72), pane*pane);
         glass = mix(glass, vec3(0.72,0.82,0.92), smoothstep(0.35,1.0,fy)*0.40);
-        if(style > 2.5) glass = mix(glass, vec3(0.45,0.60,0.70), 0.5);
+        if(glassy) glass = mix(glass, vec3(0.45,0.60,0.70), 0.5);
         // after dark roughly half the flats are awake, each with its own bulb colour
         float lit = step(0.46, fh(vec2(ci*1.7, fi*3.1) + seed*2.0));
         float warm = fh(vec2(fi*5.0, ci*2.3) + seed);
@@ -757,6 +869,42 @@ function facadeMaterial(baseHex, night){
         col *= 1.0 - dirt*0.45*smoothstep(1.8, 0.0, v);
         col *= 1.0 - dirt*0.28*streak;
         col *= 1.0 - 0.10*step(v, 0.45);
+        // style 4: a street wall. Its ground floor is split into bays, each one
+        // plain, a roller shutter, a pasted poster, or tagged with spray paint.
+        if(style > 3.5 && style < 4.5 && v < 3.3){
+          float bayW = winW * 2.0;
+          float bi = floor(u / bayW + seed), bf = fract(u / bayW + seed);
+          float kind = fh(vec2(bi, seed*3.1));
+          float pil = step(bf, 0.07) + step(0.93, bf);                // pilasters between bays
+          col = mix(col, col*1.10, pil);
+          if(kind < 0.34 && pil < 0.5){                               // roller shutter
+            float inS = step(0.14, bf) * step(bf, 0.86) * step(0.35, v) * step(v, 2.75);
+            vec3 metal = vec3(0.52,0.54,0.56) * (0.86 + 0.14*step(0.5, fract(v*9.0)));
+            metal *= 1.0 - 0.25*fnoise(vec2(u*2.0, v*0.8)) * dirt;
+            col = mix(col, metal, inS);
+            col *= 1.0 - 0.45*step(0.14, bf)*step(bf,0.86)*step(2.75, v)*step(v, 2.92);   // housing
+          } else if(kind < 0.58 && pil < 0.5){                        // posters
+            float px = fract(bf*2.0), pi = floor(bf*2.0);
+            float inP = step(0.18, px) * step(px, 0.82) * step(0.95, v) * step(v, 2.25);
+            float h2 = fh(vec2(bi*2.0+pi, 7.0));
+            vec3 pc = mix(vec3(0.90,0.25,0.22), vec3(0.20,0.45,0.80), step(0.33, h2));
+            pc = mix(pc, vec3(0.95,0.78,0.20), step(0.66, h2));
+            float band = step(0.55, fract((v-0.95)*1.6)) * 0.25;
+            pc = mix(pc, vec3(0.95,0.93,0.88), band + 0.35*step(1.95, v));
+            pc *= 0.82 + 0.18*fnoise(vec2(u*6.0, v*6.0));              // weathered paper
+            col = mix(col, pc, inP * step(h2, 0.9));
+          } else if(kind < 0.80 && pil < 0.5){                        // spray paint
+            float g = fnoise(vec2(u*1.6, v*2.4) + bi*3.7) * 0.7 + fnoise(vec2(u*5.0, v*5.0)) * 0.3;
+            float tagged = smoothstep(0.58, 0.64, g) * step(0.4, v) * step(v, 2.4);
+            float hue = fh(vec2(bi, 11.0));
+            vec3 paint = mix(vec3(0.95,0.30,0.55), vec3(0.25,0.80,0.85), step(0.5, hue));
+            paint = mix(paint, vec3(0.98,0.85,0.25), step(0.8, hue));
+            float outline = smoothstep(0.54, 0.58, g) - tagged;
+            col = mix(col, paint, tagged*0.85);
+            col = mix(col, vec3(0.08), max(outline, 0.0)*0.7*step(0.4, v)*step(v, 2.4));
+          }
+          col *= 1.0 - 0.30*step(3.05, v);                            // string course over the shops
+        }
         return col;
       }
     ` + sh.fragmentShader
@@ -858,9 +1006,12 @@ function buildWorld(def){
   lightFill.color.setHex(T.fill[0]);      lightFill.intensity = T.fill[1];
   SUN_DIR.set(T.sunDir[0], T.sunDir[1], T.sunDir[2]).normalize();
 
-  const sky = makeSky(T.skyTop, T.skyBot);
+  const sky = makeSky(T, !!def.voidBelow);
   sky.frustumCulled = false;
-  scene.add(sky); world.meshes.push(sky);
+  scene.add(sky); world.meshes.push(sky); world.sky = sky;
+
+  world.motes = makeMotes(def, T);
+  if(world.motes){ scene.add(world.motes); world.meshes.push(world.motes); }
 
   if(T.stars > 0){
     const st = makeStars(T.stars);
@@ -898,7 +1049,7 @@ function buildWorld(def){
     if(!list.length) return;
     const geo = UNIT.clone();
     const fa = new Float32Array(list.length*4), fb = new Float32Array(list.length*4);
-    const mat = facadeMaterial(def.palette[i], T.night);
+    const mat = facadeMaterial(def.palette[i], T.night, def.voidBelow ? 1 : 0);
     const im = new THREE.InstancedMesh(geo, mat, list.length);
     list.forEach((b,k)=>{
       q.setFromAxisAngle(ax, b.ry||0);
@@ -908,8 +1059,9 @@ function buildWorld(def){
       const bp = (b.bid!==undefined) ? def.buildings[b.bid] : null;
       const t = b.tint || (bp ? bp.tint : [1,1,1]);
       fa[k*4]=t[0]; fa[k*4+1]=t[1]; fa[k*4+2]=t[2];
-      fa[k*4+3]= (b.style !== undefined) ? b.style : (bp ? bp.style : 0);
-      fb[k*4]= bp?bp.winW:1; fb[k*4+1]= bp?bp.dirt:0; fb[k*4+2]= bp?bp.hmax:0; fb[k*4+3]= bp?bp.seed:0;
+      const cs = def.classStyle ? def.classStyle[b.c||0] : undefined;
+      fa[k*4+3]= (b.style !== undefined) ? b.style : (bp ? bp.style : (cs !== undefined ? cs : 0));
+      fb[k*4]= bp?bp.winW:1; fb[k*4+1]= bp?bp.dirt:0; fb[k*4+2]= bp?bp.hmax:(b.y+b.h); fb[k*4+3]= bp?bp.seed:0;
     });
     geo.setAttribute('aFa', new THREE.InstancedBufferAttribute(fa,4));
     geo.setAttribute('aFb', new THREE.InstancedBufferAttribute(fb,4));
@@ -1234,7 +1386,7 @@ function gpart(x,y,z,w,h,d,c,extra){
   return o;
 }
 
-const SUIT=0x2b313a, PLATE=0xc8354c, TRIM=0x7d8794, BOOT=0x14181e, VISOR=0x9ff0ea, POUCH=0x3a4049, STRAP=0x1d222a;
+const SUIT=0x48525e, PLATE=0xc8354c, TRIM=0x8a94a1, BOOT=0x1a1e24, VISOR=0x9ff0ea, POUCH=0x5a6152, STRAP=0x2b3038;
 
 // torso pivots at the hips; everything below is relative to that
 function makeTorso(ACC){ return mergeParts([
@@ -1537,6 +1689,179 @@ function initFX(){
     m.visible=false; scene.add(m); fx.sparks.push({mesh:m, life:0});
   }
 }
+// ---- impacts, casings and floating motes --------------------------------
+// Fixed pools, created once: a match never allocates anything for these.
+const fx2 = {flashes:[], puffs:[], chips:null, chipD:[], shells:null, shellD:[], motes:null, ready:false};
+let puffTex = null;
+function puffTexture(){
+  if(puffTex) return puffTex;
+  const c = document.createElement('canvas'); c.width = c.height = 64;
+  const g = c.getContext('2d');
+  for(let i=0;i<9;i++){                            // a few soft blobs make it cloudy, not a disc
+    const x = 32 + (Math.random()-0.5)*18, y = 32 + (Math.random()-0.5)*18, r = 12 + Math.random()*14;
+    const rg = g.createRadialGradient(x,y,1,x,y,r);
+    rg.addColorStop(0,'rgba(255,255,255,0.40)'); rg.addColorStop(1,'rgba(255,255,255,0)');
+    g.fillStyle = rg; g.fillRect(0,0,64,64);
+  }
+  puffTex = new THREE.CanvasTexture(c);
+  return puffTex;
+}
+const _m4 = new THREE.Matrix4(), _q4 = new THREE.Quaternion(), _e4 = new THREE.Euler(), _p4 = new V3(), _s4 = new V3();
+function initFX2(){
+  if(fx2.ready) return; fx2.ready = true;
+  for(let i=0;i<10;i++){
+    const m = new THREE.Sprite(new THREE.SpriteMaterial({map:glowTexture(), color:0xffd9a0, transparent:true,
+                               opacity:0, depthWrite:false, blending:THREE.AdditiveBlending}));
+    m.visible = false; scene.add(m); fx2.flashes.push({s:m, life:0});
+  }
+  for(let i=0;i<24;i++){
+    const m = new THREE.Sprite(new THREE.SpriteMaterial({map:puffTexture(), color:0xbdb6aa, transparent:true,
+                               opacity:0, depthWrite:false}));
+    m.visible = false; scene.add(m);
+    fx2.puffs.push({s:m, life:0, max:0.5, v:new V3(), size:0.3, grow:1, a0:0.5});
+  }
+  fx2.chips = new THREE.InstancedMesh(new THREE.BoxBufferGeometry(1,1,1),
+                                      new THREE.MeshLambertMaterial({color:0x8d877c}), 48);
+  fx2.chips.frustumCulled = false; scene.add(fx2.chips);
+  for(let i=0;i<48;i++){ fx2.chipD.push({life:0, p:new V3(), v:new V3(), r:new V3(), w:new V3(), s:0.03}); hideInst(fx2.chips, i); }
+  fx2.shells = new THREE.InstancedMesh(new THREE.BoxBufferGeometry(1,1,1),
+                                       new THREE.MeshPhongMaterial({color:0xffffff, shininess:60, specular:0x9a8a60}), 30);
+  fx2.shells.frustumCulled = false; scene.add(fx2.shells);
+  for(let i=0;i<30;i++){ fx2.shellD.push({life:0, p:new V3(), v:new V3(), r:new V3(), w:new V3(), sz:new V3(), bounces:0, floor:0}); hideInst(fx2.shells, i); }
+  fx2.chips.instanceMatrix.needsUpdate = true; fx2.shells.instanceMatrix.needsUpdate = true;
+}
+function hideInst(im, i){ _m4.makeScale(0,0,0); im.setMatrixAt(i, _m4); }
+let fxNearCam = true;
+function nearCam(x,y,z){ return Math.abs(camera.position.x-x) + Math.abs(camera.position.z-z) < 70; }
+// kind: 'wall' | 'blood' | 'shove'
+function impact(x,y,z,nx,ny,nz,kind){
+  if(!fx2.ready || !nearCam(x,y,z)) return;
+  const low = QUALITY[S.quality].fx < 1;
+  if(kind === 'wall'){
+    const f = fx2.flashes.find(v=>v.life<=0) || fx2.flashes[0];
+    f.s.position.set(x+nx*0.05, y+ny*0.05, z+nz*0.05);
+    f.s.scale.setScalar(rnd(0.35,0.55)); f.s.visible = true; f.s.material.opacity = 0.9; f.life = 0.07;
+    const n = low ? 3 : 6;
+    for(let i=0;i<n;i++){
+      const c = fx2.chipD.find(v=>v.life<=0); if(!c) break;
+      c.p.set(x+nx*0.03, y+ny*0.03, z+nz*0.03);
+      c.v.set(nx*rnd(1.5,4)+rnd(-1.6,1.6), ny*rnd(1.5,4)+rnd(0.5,2.8), nz*rnd(1.5,4)+rnd(-1.6,1.6));
+      c.r.set(Math.random()*6, Math.random()*6, Math.random()*6);
+      c.w.set(rnd(-14,14), rnd(-14,14), rnd(-14,14));
+      c.s = rnd(0.018, 0.045); c.life = rnd(0.45, 0.8);
+    }
+  }
+  const puffs = kind === 'wall' ? 2 : 3;
+  for(let i=0;i<puffs;i++){
+    const p = fx2.puffs.find(v=>v.life<=0) || fx2.puffs[(Math.random()*fx2.puffs.length)|0];
+    p.s.position.set(x+nx*0.08, y+ny*0.08, z+nz*0.08);
+    p.v.set(nx*rnd(0.4,1.2)+rnd(-0.3,0.3), ny*rnd(0.4,1.2)+rnd(0.1,0.6), nz*rnd(0.4,1.2)+rnd(-0.3,0.3));
+    if(kind === 'blood'){ p.s.material.color.setHex(0x9e1622); p.size = rnd(0.22,0.34); p.max = 0.34; p.a0 = 0.85; p.grow = 1.6; }
+    else if(kind === 'shove'){ p.s.material.color.setHex(0xe8f6ff); p.size = rnd(0.30,0.45); p.max = 0.40; p.a0 = 0.75; p.grow = 2.2; }
+    else { p.s.material.color.setHex(0xb8b0a2); p.size = rnd(0.20,0.34); p.max = rnd(0.5,0.8); p.a0 = 0.55; p.grow = 2.4; }
+    p.s.material.rotation = Math.random()*6.28;
+    p.s.scale.setScalar(p.size); p.s.visible = true; p.s.material.opacity = p.a0; p.life = p.max;
+  }
+}
+// brass (or a red shotgun hull) thrown out of the right side of your gun
+function ejectShell(shape){
+  if(!fx2.ready || shape === 'usp' && Math.random() < 0.5) return;
+  const c = fx2.shellD.find(v=>v.life<=0) || fx2.shellD[0];
+  const i = fx2.shellD.indexOf(c);
+  const sy = Math.sin(player.yaw), cy = Math.cos(player.yaw);
+  const rx = cy, rz = -sy, fx = -sy, fz = -cy;          // right and forward on the ground plane
+  c.p.set(camera.position.x + rx*0.16 + fx*0.34, camera.position.y - 0.12, camera.position.z + rz*0.16 + fz*0.34);
+  const side = rnd(1.6, 2.4), up = rnd(1.3, 2.0);
+  c.v.set(player.vel.x + rx*side - fx*0.3, up + Math.max(0, player.vel.y*0.5), player.vel.z + rz*side - fz*0.3);
+  c.r.set(0, player.yaw, Math.random()*6); c.w.set(rnd(-20,20), rnd(-10,10), rnd(-24,24));
+  const red = shape === 'pump';
+  if(red) c.sz.set(0.024, 0.024, 0.07);
+  else if(shape === 'awp') c.sz.set(0.013, 0.013, 0.07);
+  else if(shape === 'deagle') c.sz.set(0.014, 0.014, 0.034);
+  else c.sz.set(0.011, 0.011, 0.038);
+  c.floor = player.pos.y + 0.012; c.bounces = 0; c.life = 2.4;
+  fx2.shells.setColorAt(i, _col4.setHex(red ? 0xb3262a : 0xd2a64a));
+  if(fx2.shells.instanceColor) fx2.shells.instanceColor.needsUpdate = true;
+}
+const _col4 = new THREE.Color();
+function stepFX2(dt){
+  if(!fx2.ready) return;
+  for(const f of fx2.flashes){ if(f.life<=0) continue; f.life -= dt; f.s.material.opacity = Math.max(0, f.life/0.07)*0.9; if(f.life<=0) f.s.visible = false; }
+  for(const p of fx2.puffs){
+    if(p.life<=0) continue;
+    p.life -= dt;
+    const t = 1 - Math.max(0, p.life/p.max);
+    p.s.position.addScaledVector(p.v, dt); p.v.multiplyScalar(Math.max(0, 1-3*dt)); p.v.y += 0.25*dt;
+    p.s.scale.setScalar(p.size*(1 + t*p.grow));
+    p.s.material.opacity = p.a0*(1-t)*(1-t);
+    if(p.life<=0) p.s.visible = false;
+  }
+  let dirty = false;
+  fx2.chipD.forEach((c,i)=>{
+    if(c.life<=0) return;
+    c.life -= dt; dirty = true;
+    c.v.y -= 14*dt; c.p.addScaledVector(c.v, dt); c.r.addScaledVector(c.w, dt);
+    if(c.life<=0){ hideInst(fx2.chips, i); return; }
+    _q4.setFromEuler(_e4.set(c.r.x, c.r.y, c.r.z));
+    _m4.compose(c.p, _q4, _s4.set(c.s, c.s, c.s)); fx2.chips.setMatrixAt(i, _m4);
+  });
+  if(dirty) fx2.chips.instanceMatrix.needsUpdate = true;
+  dirty = false;
+  fx2.shellD.forEach((c,i)=>{
+    if(c.life<=0) return;
+    c.life -= dt; dirty = true;
+    if(c.bounces < 3){
+      c.v.y -= 11*dt; c.p.addScaledVector(c.v, dt); c.r.addScaledVector(c.w, dt);
+      if(c.p.y < c.floor){
+        c.p.y = c.floor; c.v.y = -c.v.y*0.32; c.v.x *= 0.45; c.v.z *= 0.45; c.w.multiplyScalar(0.5);
+        c.bounces++;
+        if(c.bounces >= 3){ c.r.x = Math.PI/2; c.r.z = 0; }       // comes to rest on its side
+      }
+    }
+    if(c.life<=0){ hideInst(fx2.shells, i); return; }
+    const k = Math.min(1, c.life/0.35);
+    _q4.setFromEuler(_e4.set(c.r.x, c.r.y, c.r.z));
+    _m4.compose(c.p, _q4, _s4.copy(c.sz).multiplyScalar(k)); fx2.shells.setMatrixAt(i, _m4);
+  });
+  if(dirty) fx2.shells.instanceMatrix.needsUpdate = true;
+  stepMotes(dt);
+}
+// fireflies at night on the island, pollen by day, dust in the city after dark
+function makeMotes(def, T){
+  let kind = null;
+  if(def.voidBelow) kind = T.night > 0.5 ? 'fire' : 'pollen';
+  else if(T.night > 0.3) kind = 'dust';
+  if(!kind) return null;
+  const n = kind === 'fire' ? 90 : 140, arr = new Float32Array(n*3), seed = new Float32Array(n);
+  for(let i=0;i<n;i++){ arr[i*3]=rnd(-14,14); arr[i*3+1]=rnd(0.3,5); arr[i*3+2]=rnd(-14,14); seed[i]=Math.random()*100; }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(arr,3));
+  const col = kind === 'fire' ? 0xffe28a : (kind === 'pollen' ? 0xfff8e0 : 0xb8c8e8);
+  const m = new THREE.Points(g, new THREE.PointsMaterial({color:col, map:glowTexture(), size: kind==='fire' ? 0.34 : 0.12,
+    sizeAttenuation:true, transparent:true, opacity: kind==='fire' ? 0.95 : 0.55, depthWrite:false,
+    blending: kind==='pollen' ? THREE.NormalBlending : THREE.AdditiveBlending}));
+  m.frustumCulled = false;
+  m.userData = {seed:seed, base:arr.slice(), kind:kind, t:0};
+  return m;
+}
+function stepMotes(dt){
+  const m = world.motes; if(!m) return;
+  const u = m.userData; u.t += dt;
+  const a = m.geometry.attributes.position.array, b = u.base, sd = u.seed;
+  const cx = camera.position.x, cy = (world.spawnY||0), cz = camera.position.z;
+  const sp = u.kind === 'fire' ? 0.5 : 0.25;
+  for(let i=0;i<sd.length;i++){
+    const t = u.t*sp + sd[i];
+    // wrap each mote into a box that follows the camera, so there are always some nearby
+    let x = b[i*3] + Math.sin(t*0.7)*1.2 + u.t*0.15, z = b[i*3+2] + Math.cos(t*0.6)*1.2;
+    x = ((x - cx + 14) % 28 + 28) % 28 - 14 + cx;
+    z = ((z - cz + 14) % 28 + 28) % 28 - 14 + cz;
+    a[i*3] = x; a[i*3+1] = cy + b[i*3+1] + Math.sin(t*1.3)*0.4; a[i*3+2] = z;
+  }
+  m.geometry.attributes.position.needsUpdate = true;
+  if(u.kind === 'fire') m.material.opacity = 0.7 + 0.25*Math.sin(u.t*3.1);
+}
+
 function tracer(a,b){
   if(QUALITY[S.quality].fx<1 && Math.random()<.5) return;
   const t = fx.tracers.find(x=>x.life<=0) || fx.tracers[0];
@@ -1557,6 +1882,7 @@ function decal(x,y,z,nx,ny,nz){
 }
 function spark(x,y,z,nx,ny,nz){
   decal(x,y,z,nx,ny,nz);
+  impact(x,y,z,nx,ny,nz,'wall');
   const s = fx.sparks.find(v=>v.life<=0) || fx.sparks[0];
   s.mesh.position.set(x+nx*.02,y+ny*.02,z+nz*.02);
   s.mesh.lookAt(x+nx, y+ny, z+nz);
@@ -1587,7 +1913,7 @@ function stepFX(dt){
    ============================================================ */
 const vm = { group:new THREE.Group(), current:null, models:{}, t:0,
   lagX:0, lagY:0, lastYaw:0, lastPitch:0, boltT:0, flashT:0 };
-const matGun = new THREE.MeshPhongMaterial({vertexColors:true, shininess:28, specular:0x4c535c});
+const matGun = new THREE.MeshPhongMaterial({vertexColors:true, shininess:46, specular:0x7a838d});
 const matFlash = new THREE.MeshBasicMaterial({color:0xffe6a6, transparent:true, opacity:0, depthWrite:false, blending:THREE.AdditiveBlending});
 let scopeRT=null, scopeCam=null, scopeLive=null, scopeGlass=null, retTex=null;
 function scopeGlassMat(){
@@ -1966,6 +2292,7 @@ function fireShot(origin, dir, dmg, falloff, shooter, muzzle, claims){
   }
   const end = tmpB.copy(dir).multiplyScalar(bestT).add(origin);
   tracer(muzzle || origin, end);
+  if(victim && victim !== player) impact(end.x, end.y, end.z, -dir.x, -dir.y, -dir.z, MODE().knock ? 'shove' : 'blood');
   if(victim && claims){
     // online: report the hit and let the server apply it. We still draw the
     // marker locally so the feedback is instant.
@@ -2056,6 +2383,7 @@ function applyDamage(victim, dmg, shooter, head){
     if(!player.alive) return;
     player.hp -= dmg; player.lastHurt = performance.now()/1000;
     flashDamage();
+    if(shooter && shooter.pos) showHurtDir(shooter.pos.x, shooter.pos.z);
     if(player.hp<=0){
       player.hp=0; player.alive=false; player.deaths++; player.respawn=2.2;
       if(shooter && shooter.kills!==undefined) shooter.kills++;
@@ -2117,6 +2445,7 @@ function playerShoot(now){
   muzzleLight.intensity = w.quiet ? 1.8 : ((w.shape==='awp'||w.shape==='pump') ? 5.5 : 3.6);
   muzzleLight.position.copy(muz);
   sfxShot(w.shape, w.quiet?0.42:((w.shape==='awp'||w.shape==='pump')?1:0.8));
+  ejectShell(w.shape);
   if(player.ammo[player.gun]===0) startReload();
 }
 const _r1 = new V3(), _u1 = new V3(), _up = new V3(0,1,0);
@@ -2449,6 +2778,33 @@ function healPop(n){
     h.style.opacity = '0'; h.style.transform = 'translateY(-26px)';
   });
 }
+// a red arc around the crosshair pointing at whoever just hit you
+const hurtDirs = [];
+function showHurtDir(ax, az){
+  const box = el('hurtdir'), els2 = box && box.children ? box.children : [];
+  if(!els2.length) return;
+  const dx = ax - player.pos.x, dz = az - player.pos.z;
+  if(Math.hypot(dx, dz) < 0.5) return;
+  const sy = Math.sin(player.yaw), cy = Math.cos(player.yaw);
+  const ang = Math.atan2(dx*cy - dz*sy, -dx*sy - dz*cy);      // 0 = ahead, +90° = to your right
+  let slot = hurtDirs.findIndex(h=>h.life<=0);
+  if(slot < 0) slot = 0;
+  hurtDirs[slot] = {life:0.9, ax:ax, az:az, el:els2[slot]};
+  els2[slot].style.transform = 'rotate(' + ang.toFixed(3) + 'rad)';
+  els2[slot].style.opacity = '1';
+}
+function stepHurtDir(dt){
+  hurtDirs.forEach(h=>{
+    if(!h || h.life<=0) return;
+    h.life -= dt;
+    // keep pointing at the attacker while you turn
+    const dx = h.ax - player.pos.x, dz = h.az - player.pos.z;
+    const sy = Math.sin(player.yaw), cy = Math.cos(player.yaw);
+    const ang = Math.atan2(dx*cy - dz*sy, -dx*sy - dz*cy);
+    h.el.style.transform = 'rotate(' + ang.toFixed(3) + 'rad)';
+    h.el.style.opacity = Math.max(0, Math.min(1, h.life/0.5)).toFixed(2);
+  });
+}
 function flashDamage(){
   const d = el('dmg');
   d.style.transition='none'; d.style.opacity='.75';
@@ -2763,6 +3119,8 @@ function wireNet(){
       if(s.alive) player.hp = s.hp;
     },
     tookDamage(m){
+      const src = Net.remote.get(m.by);
+      if(src) showHurtDir(src.x, src.z);
       player.hp = m.hp;
       player.lastHurt = performance.now()/1000;
       flashDamage();
@@ -2792,6 +3150,7 @@ function wireNet(){
       if(flat > 14){ const f = 14/flat; player.vel.x *= f; player.vel.z *= f; }
       if(player.vel.y > 7.5) player.vel.y = 7.5;
       flashDamage();
+      showHurtDir(m.fx, m.fz);
     },
     fire(m){
       if(!audioOn) return;                // nobody is listening: in the menu, paused or tabbed out
@@ -2826,7 +3185,7 @@ function reviveLocal(s){
   document.getElementById('dead').classList.add('hidden');
 }
 let fxReady=false;
-function initFXOnce(){ if(!fxReady){ initFX(); fxReady=true; } }
+function initFXOnce(){ if(!fxReady){ initFX(); initFX2(); fxReady=true; } }
 
 function leaveMatch(){
   match.running=false;
@@ -3132,6 +3491,7 @@ function frame(){
   let dt = clock.getDelta();
   if(dt>0.1) dt = 0.1;
   const now = performance.now()/1000;
+  if(world.sky && world.sky.material.uniforms) world.sky.material.uniforms.uTime.value = now;
   refreshAudioGate();
 
   if(intro.active){
@@ -3161,7 +3521,7 @@ function frame(){
         if(b.net) driveRemote(b, dt);
         else botThink(b, dt, now, tick);
       }
-      stepFX(dt); stepFeed(dt);
+      stepFX(dt); stepFX2(dt); stepFeed(dt); stepHurtDir(dt);
       updateHUD(false); updateCrosshair();
     }
   } else if(!match.running && !intro.active){
