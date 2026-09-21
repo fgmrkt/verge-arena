@@ -72,6 +72,18 @@
   .tin{flex:1;min-width:0;padding:.55rem .7rem;border-radius:2px;background:rgba(6,9,12,.6);
     color:var(--paper);border:0;box-shadow:inset 0 0 0 1px var(--line);font:inherit;font-size:.92rem}
   .tin:focus{outline:none;box-shadow:inset 0 0 0 1px var(--good)}
+  .btn.mini{padding:.52rem .8rem;font-size:.84rem;flex:none}
+  .lobby{margin:.55rem 0 1.15rem;padding:.65rem .75rem;border-radius:3px;
+    background:rgba(8,12,16,.45);box-shadow:inset 0 0 0 1px var(--line)}
+  .lobby .netstate{font-size:.85rem;font-weight:600}
+  .who{display:flex;flex-wrap:wrap;gap:.3rem;margin-top:.5rem}
+  .who span{display:inline-flex;align-items:center;gap:.4rem;padding:.24rem .55rem;
+    border-radius:2px;background:rgba(242,240,234,.09);font-size:.82rem}
+  .who span.me{background:var(--paper);color:var(--ink);font-weight:600}
+  .who span.bot{opacity:.55}
+  .who i{width:6px;height:6px;border-radius:50%;background:var(--good);font-style:normal;flex:none}
+  .who span.bot i{background:var(--mute)}
+  .lobby .hint{margin-top:.5rem;font-size:.77rem;color:var(--mute);line-height:1.5}
   .netstate.live{color:var(--good)} .netstate.lost{color:var(--hot)}
   .netstate.connecting{color:#e8c34b}
   .go{margin-top:1.4rem;display:flex;align-items:center;gap:1rem;flex-wrap:wrap}
@@ -282,11 +294,17 @@
     <div class="cols">
       <div>
         <div class="fieldname">Your name</div>
+        <input id="pname" class="tin" maxlength="14" placeholder="Player" value="">
+        <div class="fieldname" style="margin-top:1.15rem">Lobby</div>
         <div class="row2">
-          <input id="pname" class="tin" maxlength="14" placeholder="Player" value="">
           <input id="proom" class="tin" maxlength="24" placeholder="main" value="">
+          <button class="btn ghost mini" id="copylink" type="button">Copy invite</button>
         </div>
-        <div class="note" id="netstate" style="display:block;margin:-.55rem 0 1.15rem">Offline</div>
+        <div class="lobby">
+          <div class="netstate" id="netstate">Offline</div>
+          <div class="who" id="lobbylist"></div>
+          <div class="hint" id="lobbyhint"></div>
+        </div>
         <div class="fieldname">Mode</div>
         <div class="choices" id="modePick"></div>
         <div class="note" id="modeNote" style="display:block;margin:-.75rem 0 1.15rem"></div>
@@ -512,7 +530,7 @@ const vmKey = new THREE.DirectionalLight(0xfff4e2, 0.95); vmKey.position.set(0.4
 const vmRim = new THREE.DirectionalLight(0x8fb4dc, 0.60); vmRim.position.set(-0.7,0.15,-0.6);
 vmScene.add(vmKey, vmRim);
 
-const world = { boxes:[], meshes:[], ground:null, half:32, spawns:[], nav:[] };
+const world = { boxes:[], meshes:[], ground:null, half:32, spawns:[], nav:[], sight:[] };
 const UNIT = new THREE.BoxBufferGeometry(1,1,1);
 function shadeBox(g, floor){
   const pos=g.attributes.position, nrm=g.attributes.normal, n=pos.count;
@@ -539,6 +557,7 @@ function clearWorld(){
     world.ground.geometry.dispose(); world.ground.material.dispose(); world.ground=null;
   }
   world.boxes.length = 0;
+  world.sight.length = 0;
 }
 
 let glowTex = null;
@@ -797,7 +816,14 @@ function buildWorld(def){
   const groups = def.palette.map(()=>[]);
   def.boxes.forEach(b=>{
     groups[b.c||0].push(b);
-    if(b.deco) return;
+    if(b.deco){
+      // poles, trees and signs block the view without blocking movement
+      if(b.h >= 1.6 && Math.abs(b.x) < def.half+2 && Math.abs(b.z) < def.half+2){
+        world.sight.push({mx:b.x-b.w/2, my:b.y,     mz:b.z-b.d/2,
+                          Mx:b.x+b.w/2, My:b.y+b.h, Mz:b.z+b.d/2});
+      }
+      return;
+    }
     world.boxes.push({
       mx:b.x-b.w/2, my:b.y,     mz:b.z-b.d/2,
       Mx:b.x+b.w/2, My:b.y+b.h, Mz:b.z+b.d/2
@@ -1044,6 +1070,35 @@ function farSpawn(){
   }
   return best||[0,0];
 }
+const _sd = new V3(), _so = new V3();
+// how far you can see from here looking along this yaw
+function viewClear(x, y, z, yaw, maxT){
+  _so.set(x, y, z);
+  _sd.set(-Math.sin(yaw), 0, -Math.cos(yaw));
+  let best = maxT;
+  const lists = [world.boxes, world.sight];
+  for(let L=0; L<2; L++){
+    const arr = lists[L];
+    for(let i=0;i<arr.length;i++){
+      const t = rayBox(_so.x,_so.y,_so.z,_sd.x,_sd.y,_sd.z,arr[i]);
+      if(t>0 && t<best) best = t;
+    }
+  }
+  return best;
+}
+// face the most open direction, leaning toward the middle of the map
+function bestSpawnYaw(x, y, z){
+  const toCentre = Math.atan2(x, z);
+  let best = toCentre, bestScore = -1;
+  for(let i=0;i<24;i++){
+    const a = toCentre + (i/24)*Math.PI*2;
+    let d = Math.min(viewClear(x, y, z, a, 26), 26);
+    if(d < 2.5) continue;                       // something is right in your face
+    const score = d * (1 + 0.4*Math.cos(a - toCentre));
+    if(score > bestScore){ bestScore = score; best = a; }
+  }
+  return best;
+}
 function spawnPlayer(){
   const s = farSpawn();
   player.pos.set(s[0], world.spawnY||0, s[1]);
@@ -1052,8 +1107,7 @@ function spawnPlayer(){
   player.hp = 100; player.alive = true; player.lastHurt = -99; player.recoilOwed = 0;
   player.height = HEIGHT; player.eye = EYE; player.crouching = false; player.viewOff = 0; player.stepDy = 0;
   player.sliding = false; player.slideT = 0; player.slideCool = 0; player.roll = 0; player.land = 0;
-  // face the arena centre
-  player.yaw = Math.atan2(s[0], s[1]);
+  player.yaw = bestSpawnYaw(player.pos.x, player.pos.y + EYE, player.pos.z);
   player.pitch = 0;
   resetPlayerLoadout();
   buildSlots();
@@ -1686,7 +1740,12 @@ function selectGunModel(i){
    ============================================================ */
 let actx=null, noiseBuf=null, muted=false, master=null;
 // everything routes through one gain node, so volume and mute are a single control
-function setVolume(){ if(master) master.gain.value = muted ? 0 : S.volume; }
+let audioOn = false;                     // world sound only while actually playing
+function setVolume(){ if(master) master.gain.value = (muted || !audioOn) ? 0 : S.volume; }
+function refreshAudioGate(){
+  const want = match.running && !match.over && pointerLocked && !intro.active;
+  if(want !== audioOn){ audioOn = want; setVolume(); }
+}
 function toggleMute(){ muted = !muted; setVolume(); }
 function audioInit(){
   if(actx) return;
@@ -2183,6 +2242,10 @@ const el = id=>document.getElementById(id);
 let crossPunch = 0, vmKick = 0, vmSwitch = 0, scopeOn = false;
 const feedItems = [];
 
+function esc(t){
+  return String(t).replace(/[&<>"']/g, c =>
+    ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
 function feedTag(e){
   if(!e) return {name:'The city', col:'rgba(242,240,234,.55)', chip:'transparent', me:false};
   if(e===player) return {name:'You', col:'#4fd3cc', chip:CLASS_CSS[player.cls||0], me:true};
@@ -2194,9 +2257,9 @@ function addFeed(killer, victim, head){
   row.className = 'fr' + (k.me||v.me ? ' mine' : '');
   row.innerHTML =
     `<span class="chip" style="background:${k.chip}"></span>` +
-    `<span class="fn" style="color:${k.col}">${k.name}</span>` +
+    `<span class="fn" style="color:${k.col}">${esc(k.name)}</span>` +
     `<span class="fx${head?' hs':''}">${head?'\u2316':'\u203A'}</span>` +
-    `<span class="fn" style="color:${v.me?'#ff6b7e':v.col}">${v.name}</span>`;
+    `<span class="fn" style="color:${v.me?'#ff6b7e':v.col}">${esc(v.name)}</span>`;
   el('feed').appendChild(row);
   feedItems.push({node:row, t:6.5});
   while(feedItems.length>6){ const o=feedItems.shift(); o.node.remove(); }
@@ -2372,7 +2435,7 @@ function rowsFor(tbody){
       .concat(bots.map(b=>({name:b.name, cls:CLASSES[b.cls].name, kills:b.kills, deaths:b.deaths})));
   list.sort((a,b)=>b.kills-a.kills || a.deaths-b.deaths);
   tbody.innerHTML = list.map(p=>
-    `<tr class="${p.me?'me':''}"><td>${p.name} <span style="color:var(--mute);font-size:.8em">${p.cls}</span></td><td class="r">${p.kills}</td><td class="r">${p.deaths}</td></tr>`
+    `<tr class="${p.me?'me':''}"><td>${esc(p.name)} <span style="color:var(--mute);font-size:.8em">${esc(p.cls)}</span></td><td class="r">${p.kills}</td><td class="r">${p.deaths}</td></tr>`
   ).join('');
 }
 
@@ -2514,15 +2577,18 @@ function wireNet(){
   Net.handlers = {
     status(){
       const el2 = el('netstate');
-      const n = Net.remote.size + 1;
+      let humans = 1;
+      Net.remote.forEach(r => { if(!r.bot) humans++; });
       const map = {
         offline:   'Offline — playing against bots',
         connecting:'Connecting…',
-        live:      'Online — ' + n + (n === 1 ? ' player in this lobby' : ' players in this lobby'),
+        live:      humans === 1 ? 'Online — waiting for friends'
+                 : 'Online — ' + humans + ' people in this lobby',
         lost:      'Connection lost — retrying'
       };
       el2.textContent = map[Net.status] || Net.status;
       el2.className = 'netstate ' + Net.status;
+      renderLobby();
     },
     match(m){
       match.target = m.target;
@@ -2909,6 +2975,7 @@ function frame(){
   let dt = clock.getDelta();
   if(dt>0.1) dt = 0.1;
   const now = performance.now()/1000;
+  refreshAudioGate();
 
   if(intro.active){
     updateIntro(dt);                       // the city holds still while the camera moves
@@ -2997,6 +3064,36 @@ function showOops(msg){
 window.addEventListener('error', e=>showOops(e.message + (e.lineno ? '  (line ' + e.lineno + ')' : '')));
 window.addEventListener('unhandledrejection', e=>showOops('async: ' + (e.reason && e.reason.message || e.reason)));
 
+// who is in this lobby right now, and how a friend gets in
+function inviteLink(){
+  const room = ((el('proom').value || '').trim()) || 'main';
+  const base = (location.origin || '') + (location.pathname || '/');
+  return base + '?room=' + encodeURIComponent(room);
+}
+function renderLobby(){
+  const list = el('lobbylist'), hint = el('lobbyhint');
+  if(!list || !hint) return;
+  if(!Net.on){
+    list.innerHTML = '';
+    hint.textContent = Net.url()
+      ? 'Not connected, so you are playing bots on your own machine.'
+      : 'Open the game from its web address to play with other people.';
+    return;
+  }
+  const me = ((el('pname').value || '').trim()) || 'Player';
+  const humans = [], botCount = [];
+  Net.remote.forEach(r => { if(r.bot) botCount.push(r); else humans.push(r.name); });
+  let html = '<span class="me"><i></i>' + esc(me) + '</span>';
+  humans.forEach(n => { html += '<span><i></i>' + esc(n) + '</span>'; });
+  if(botCount.length) html += '<span class="bot"><i></i>' + botCount.length +
+                              ' bot' + (botCount.length > 1 ? 's' : '') + '</span>';
+  list.innerHTML = html;
+  hint.textContent = humans.length === 0
+    ? 'Nobody else here yet. Send a friend your invite link and they land in this lobby.'
+    : (humans.length === 1
+        ? humans[0] + ' is in this lobby with you.'
+        : humans.length + ' other people are in this lobby with you.');
+}
 function localStorage_safe(k, v){
   try { if(v === undefined) return window.localStorage.getItem(k); window.localStorage.setItem(k, v); }
   catch(e){ return null; }
@@ -3075,8 +3172,22 @@ function wireMenu(){
   }
   let reconnectTimer = 0;
   const queueReconnect = ()=>{ clearTimeout(reconnectTimer); reconnectTimer = setTimeout(ensureConnected, 700); };
-  el('pname').oninput = queueReconnect;
-  el('proom').oninput = queueReconnect;
+  el('pname').oninput = ()=>{ renderLobby(); queueReconnect(); };
+  el('proom').oninput = ()=>{
+    renderLobby();
+    // keep the address bar on the current lobby so it can just be copied
+    try { history.replaceState(null, '', inviteLink()); } catch(e){}
+    queueReconnect();
+  };
+  el('copylink').onclick = ()=>{
+    const url = inviteLink(), b = el('copylink'), was = b.textContent;
+    const done = ()=>{ b.textContent = 'Copied'; setTimeout(()=>{ b.textContent = was; }, 1500); };
+    try {
+      if(navigator.clipboard && navigator.clipboard.writeText)
+        navigator.clipboard.writeText(url).then(done, ()=>window.prompt('Copy this link:', url));
+      else window.prompt('Copy this link:', url);
+    } catch(e){ window.prompt('Copy this link:', url); }
+  };
   el('play').onclick = ()=>{
     const nm = (el('pname').value || '').trim();
     const rm = (el('proom').value || '').trim();
@@ -3087,7 +3198,11 @@ function wireMenu(){
   };
   // remember what you typed last time, then join the lobby right away
   el('pname').value = localStorage_safe('verge.name') || '';
-  el('proom').value = localStorage_safe('verge.room') || '';
+  // a link with ?room=... drops you straight into that lobby
+  let urlRoom = '';
+  try { urlRoom = new URLSearchParams(location.search || '').get('room') || ''; } catch(e){}
+  el('proom').value = urlRoom || localStorage_safe('verge.room') || '';
+  renderLobby();
   ensureConnected();
   el('resume').onclick = requestLock;
   el('quit').onclick = leaveMatch;

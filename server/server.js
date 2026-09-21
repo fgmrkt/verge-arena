@@ -36,17 +36,20 @@ const MODES = {
   ffa:   {label:'FFA',       fill:10, target:15, time:360, knock:0, kind:'ffa',
           classes:[0,1,2,3], skill:'random'},
   duel:  {label:'1v1',       fill:2,  target:10, time:300, knock:0, kind:'duel',
-          classes:[0,1,2,3], skill:'even'},
+          classes:[0,1,2,3], skill:'duel'},
   knock: {label:'Knockback', fill:6,  target:10, time:300, knock:1, kind:'knock',
           classes:[0,1],     skill:'knock'}
 };
 
 // bot skill profiles; FFA rolls one per bot, duels are always Even
+// acc is the base chance a shot connects before range is taken into account
 const SKILL = {
-  casual: {spread:0.075, rof:0.70, dmg:4.5, react:0.50, speed:3.5},
-  even:   {spread:0.048, rof:0.52, dmg:6.0, react:0.34, speed:4.2},
-  sharp:  {spread:0.030, rof:0.40, dmg:8.0, react:0.22, speed:4.9},
-  knock:  {spread:0.038, rof:0.50, dmg:6.0, react:0.26, speed:4.4}
+  casual: {spread:0.075, rof:0.70, dmg:4.5, react:0.50, speed:3.5, acc:0.42},
+  even:   {spread:0.048, rof:0.52, dmg:6.0, react:0.34, speed:4.2, acc:0.55},
+  sharp:  {spread:0.030, rof:0.40, dmg:8.0, react:0.22, speed:4.9, acc:0.70},
+  knock:  {spread:0.038, rof:0.50, dmg:6.0, react:0.26, speed:4.4, acc:0.60},
+  // the duel opponent: quick to react, accurate, and it pushes you
+  duel:   {spread:0.020, rof:0.32, dmg:10,  react:0.14, speed:5.0, acc:0.82}
 };
 const SKILL_NAMES = ['casual','even','sharp'];
 
@@ -160,8 +163,9 @@ class Room {
     while(this.bots.length > want) this.bots.pop();
     while(this.bots.length < want){
       const skillKey = this.mode.skill === 'random' ? pick(SKILL_NAMES)
-                     : this.mode.skill === 'even'   ? 'even' : 'knock';
-      const allowed = this.mode.classes.filter(c => !(this.mode.knock && c === 2));
+                     : (SKILL[this.mode.skill] ? this.mode.skill : 'even');
+      let allowed = this.mode.classes.filter(c => !(this.mode.knock && c === 2));
+      if(this.modeKey === 'duel') allowed = [0];          // rifle: reliable at any range
       const b = {
         id: nextId++, bot:true,
         name: pick(NAMES), cls: pick(allowed),
@@ -364,7 +368,8 @@ class Room {
     if(visible){
       const toF = Math.atan2(foe.x-b.x, foe.z-b.z);
       b.yaw = lerpAngle(b.yaw, toF, 1 - Math.pow(0.0005, dt));
-      const want = dist > K.hold ? 1 : (dist < K.near ? -0.7 : 0);
+      const hold = this.mode.skill === 'duel' ? K.hold * 0.55 : K.hold;
+      const want = dist > hold ? 1 : (dist < K.near ? -0.7 : 0);
       wx = Math.sin(toF)*want + Math.sin(toF+Math.PI/2)*b.strafe*0.85;
       wz = Math.cos(toF)*want + Math.cos(toF+Math.PI/2)*b.strafe*0.85;
       if(Math.random() < dt*0.5) b.strafe *= -1;
@@ -379,7 +384,8 @@ class Room {
         const spread  = S.spread * K.spread * (kn ? 0.70 : 1);
         for(let i=0;i<pellets;i++){
           // bots roll their own accuracy; a miss simply does nothing
-          if(Math.random() < Math.min(0.9, 0.55 / (1 + spread*dist*6))){
+          const acc = S.acc === undefined ? 0.55 : S.acc;
+          if(Math.random() < Math.min(0.95, acc / (1 + spread*dist*6))){
             if(kn){
               this.broadcast({t:'shove', id:foe.id, fx:b.x, fz:b.z, power:power});
               if(foe !== b) foe.lastHitBy = b.id;
@@ -608,4 +614,4 @@ server.listen(PORT, () => {
   console.log('Verge server on http://localhost:' + PORT + '  (ws path /ws)');
 });
 
-module.exports = { Room, MODES, ARMS };
+module.exports = { Room, MODES, ARMS, SKILL };
