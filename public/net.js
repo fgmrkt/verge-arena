@@ -182,7 +182,12 @@ function handle(m){
     case 'kill':   emit('kill', m); break;
     case 'spawn':  emit('spawned', m); break;
     case 'shove':  emit('shove', m); break;
-    case 'end':    emit('matchEnd', m); break;
+    case 'end':
+      if(Net.match){ Net.match.over = true; Net.match.nextAt = performance.now() + (m.next || 8)*1000; }
+      emit('matchEnd', m); break;
+    case 'settings':
+      if(Net.match) Net.match.bots = m.bots;
+      emit('status'); break;
     case 'pong':   Net.ping = Math.round(performance.now() - pingSent); break;
   }
 }
@@ -248,6 +253,10 @@ Net.sendShot = function(weaponKey, hits){
 Net.sendClass = function(cls){
   if(!Net.on || !ws || ws.readyState !== 1) return;
   ws.send(JSON.stringify({t:'class', cls:cls}));
+};
+Net.sendBots = function(on){
+  if(!Net.on || !ws || ws.readyState !== 1) return;
+  ws.send(JSON.stringify({t:'bots', on:!!on}));
 };
 Net.sendMode = function(mode){
   if(!Net.on || !ws || ws.readyState !== 1) return;

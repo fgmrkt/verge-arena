@@ -97,6 +97,17 @@
   .pbtns{display:flex;gap:.4rem;padding:0 .95rem .8rem;flex-wrap:wrap}
   .pbtns .btn{padding:.45rem .75rem;font-size:.82rem}
   .members{border-top:1px solid var(--line);padding:.35rem 0}
+  .botrow{display:flex;align-items:center;justify-content:space-between;gap:1rem;
+    padding:.6rem .95rem;border-top:1px solid var(--line);font-size:.86rem}
+  .botrow b{font-weight:600;display:block}
+  .botrow span{color:var(--mute);font-size:.76rem}
+  .switch{width:42px;height:24px;border-radius:12px;background:rgba(242,240,234,.16);position:relative;flex:none;
+    transition:background .15s ease}
+  .switch i{position:absolute;left:3px;top:3px;width:18px;height:18px;border-radius:50%;background:var(--paper);
+    transition:transform .15s ease}
+  .switch.on{background:var(--good)}
+  .switch.on i{transform:translateX(18px)}
+  .switch:disabled{opacity:.45;cursor:default}
   .mrow{display:flex;align-items:center;gap:.65rem;padding:.38rem .95rem;font-size:.9rem}
   .mrow .av{width:26px;height:26px;border-radius:50%;flex:none;display:grid;place-items:center;
     font-size:.78rem;font-weight:700;color:var(--ink)}
@@ -365,6 +376,10 @@
             <button class="btn" id="copylink" type="button">Copy invite link</button>
             <button class="btn ghost" id="copycode" type="button">Copy code</button>
             <button class="btn ghost" id="newparty" type="button">New party</button>
+          </div>
+          <div class="botrow">
+            <div><b>Fill with bots</b><span id="botnote">Bots take the empty spots</span></div>
+            <button class="switch on" id="botswitch" type="button" role="switch" aria-checked="true"><i></i></button>
           </div>
           <div class="members" id="lobbylist"></div>
           <div class="pplay" id="lobbyhint"></div>
@@ -3053,6 +3068,13 @@ function endIntro(){
   if(!pointerLocked) el('pause').classList.remove('hidden');
 }
 let curMap = null;
+let waitingForRound = false;           // pressed Play while the party's round was ending
+let waitBtn = null, waitLabel = '', waitTimer = 0;
+function stopWaiting(){
+  waitingForRound = false;
+  clearInterval(waitTimer);
+  if(waitBtn){ waitBtn.textContent = waitLabel; waitBtn = null; }
+}
 function netSelf(){
   return {
     x: player.pos.x, y: player.pos.y, z: player.pos.z,
@@ -3103,6 +3125,8 @@ function wireNet(){
       buildSlots(); buildDeadPicker(); updateHUD(true);
       // the reply came in during the flyover: show the map we are really on
       if(intro.active) beginIntro();
+      if(waitingForRound){ stopWaiting(); startMatch(); }
+      if(Net.handlers.status) Net.handlers.status();
     },
     spawned(m){
       if(m.id === Net.id){
@@ -3188,6 +3212,7 @@ let fxReady=false;
 function initFXOnce(){ if(!fxReady){ initFX(); initFX2(); fxReady=true; } }
 
 function leaveMatch(){
+  stopWaiting();
   match.running=false;
   intro.active = false;
   el('intro').classList.add('hidden');
@@ -3615,11 +3640,21 @@ function memberRow(name, cls, tag){
          ',55%,68%)">' + esc(n.charAt(0).toUpperCase()) + '</span><span class="nm">' + esc(n) +
          '</span><span class="tag2">' + tag + '</span></div>';
 }
+function renderBotSwitch(on, enabled){
+  const b = el('botswitch'), note = el('botnote');
+  if(!b) return;
+  if(on) b.classList.add('on'); else b.classList.remove('on');
+  b.setAttribute && b.setAttribute('aria-checked', on ? 'true' : 'false');
+  b.disabled = !enabled;
+  if(note) note.textContent = !enabled ? 'Only in an online party'
+                             : (on ? 'Bots take the empty spots' : 'Off for everyone in this party');
+}
 function renderLobby(){
   const list = el('lobbylist'), hint = el('lobbyhint'), count = el('pcount');
   if(!list || !hint) return;
   const me = ((el('pname').value || '').trim()) || 'Player';
   if(!Net.on){
+    renderBotSwitch(true, false);
     list.innerHTML = memberRow(me, 'me', 'You');
     if(count) count.textContent = '';
     hint.textContent = Net.url()
@@ -3630,11 +3665,14 @@ function renderLobby(){
   }
   const humans = []; let botCount = 0;
   Net.remote.forEach(r => { if(r.bot) botCount++; else humans.push(r.name); });
+  const botsOn = !Net.match || Net.match.bots !== false;
+  renderBotSwitch(botsOn, true);
   let html = memberRow(me, 'me', 'You');
   humans.forEach(n => { html += memberRow(n, '', 'In party'); });
   if(!humans.length){
     html += '<div class="mrow wait"><span class="av"></span><span class="nm">Waiting for friends — send them your link</span></div>';
   }
+  if(!botsOn) html += '<div class="mrow bots"><span class="av">–</span><span class="nm">No bots: only people in the party fight</span></div>';
   if(botCount) html += '<div class="mrow bots"><span class="av">+</span><span class="nm">' + botCount +
                        ' bot' + (botCount > 1 ? 's' : '') + ' fill the empty spots</span></div>';
   list.innerHTML = html;
@@ -3752,11 +3790,32 @@ function wireMenu(){
   el('proom').oninput = ()=>showErr('');
   el('proom').onkeydown = e=>{ if(e.key === 'Enter') joinTyped(); };
   el('newparty').onclick = ()=>{ setParty(newCode()); ensureConnected(); };
+  el('botswitch').onclick = ()=>{
+    if(!Net.on) return;
+    const on = !Net.match || Net.match.bots !== false;
+    Net.sendBots(!on);
+  };
+  // online, the party's round may still be wrapping up; wait for the next one
+  // rather than starting a round where no shot can count
+  const startWhenReady = btn=>{
+    if(Net.on && Net.match && Net.match.over){
+      if(waitingForRound) return;
+      waitingForRound = true; waitBtn = btn; waitLabel = btn.textContent;
+      const tick = ()=>{
+        if(!waitingForRound || !Net.match) return;
+        const left = Math.max(0, Math.ceil(((Net.match.nextAt || 0) - performance.now())/1000));
+        btn.textContent = 'Next round in ' + left + 's';
+      };
+      tick(); clearInterval(waitTimer); waitTimer = setInterval(tick, 250);
+      return;
+    }
+    startMatch();
+  };
   el('play').onclick = ()=>{
     const nm = (el('pname').value || '').trim();
     if(nm) localStorage_safe('verge.name', nm);
     ensureConnected();
-    startMatch();
+    startWhenReady(el('play'));
   };
   // remember what you typed last time, then join the lobby right away
   el('pname').value = localStorage_safe('verge.name') || '';
@@ -3773,7 +3832,7 @@ function wireMenu(){
   ensureConnected();
   el('resume').onclick = requestLock;
   el('quit').onclick = leaveMatch;
-  el('again').onclick = ()=>{ ensureConnected(); startMatch(); };
+  el('again').onclick = ()=>{ ensureConnected(); startWhenReady(el('again')); };
   el('tomenu').onclick = leaveMatch;
 }
 

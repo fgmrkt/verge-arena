@@ -93,6 +93,7 @@ class Room {
     this.setMode(modeKey || 'ffa', true);
     this.players = new Map();          // id -> player
     this.bots = [];
+    this.botsOn = true;                // the party can switch bot filling off
     this.lastTick = now();
     this.acc = 0;
     this.snapAcc = 0;
@@ -123,7 +124,8 @@ class Room {
     return {
       mode: this.modeKey, label: this.mode.label, map: this.mapIndex,
       mapName: this.world.name, target: this.mode.target,
-      time: Math.max(0, Math.round(this.timeLeft)), classes: this.mode.classes
+      time: Math.max(0, Math.round(this.timeLeft)), classes: this.mode.classes,
+      bots: this.botsOn !== false, over: !!this.over
     };
   }
 
@@ -164,7 +166,7 @@ class Room {
 
   // top up with bots so a half empty lobby still plays
   fill(){
-    const want = Math.max(0, this.mode.fill - this.humans());
+    const want = this.botsOn === false ? 0 : Math.max(0, this.mode.fill - this.humans());
     while(this.bots.length > want){
       const gone = this.bots.pop();
       this.broadcast({t:'leave', id:gone.id});
@@ -279,7 +281,7 @@ class Room {
 
   end(winner){
     this.over = true;
-    this.broadcast({t:'end', winner: winner ? winner.id : 0, roster:this.roster()});
+    this.broadcast({t:'end', winner: winner ? winner.id : 0, roster:this.roster(), next: 8});
     clearTimeout(this.endTimer);
     this.endTimer = setTimeout(() => { this.endTimer = 0; this.setMode(this.modeKey); }, 8000);   // next map
   }
@@ -364,6 +366,19 @@ class Room {
     if(d < 0.001) return 0.001;
     const hit = World.raycast(this.world, fx,fy,fz, dx/d, dy/d, dz/d, d - 0.3);
     return hit < 0 ? d : -1;
+  }
+
+  // Could the shooter have hit any part of the target? The client aims at whatever
+  // shows: a head over a car, shoulders through a window. Checking only the middle
+  // of the body rejected those hits, so every visible part is tried.
+  lineOfFire(me, target, maxD){
+    const eye = me.y + ((me.state & 2) ? 1.0 : 1.5);          // crouched players look from lower
+    const crouchT = (target.state & 2) ? 0.62 : 1;
+    const pts = [1.55, 1.25, 0.95, 0.55];
+    for(const h of pts){
+      if(this.canSee(me, me.x, eye, me.z, target.x, target.y + h*crouchT, target.z, maxD) > 0) return true;
+    }
+    return false;
   }
 
   thinkBot(b, dt, t){
@@ -596,8 +611,15 @@ wss.on('connection', (ws, req) => {
         if(!has(ARMS, m.w) || !me.alive || room.over) break;
         const arm = ARMS[m.w];
         const t = now();
-        const minGap = (60 / arm.rpm) * 0.7;          // allow for jitter
-        if(t - me.lastShot < minGap) break;           // firing faster than the gun can
+        // Rate of fire as a bucket, not a minimum gap: over the internet shots often
+        // arrive bunched together after a hiccup, and a strict gap threw those hits
+        // away. The bucket still caps the average at the gun's real rate.
+        me.ammoTok = me.ammoTok || {};
+        const cap = Math.max(4, arm.rpm/60);          // up to a second's worth may arrive at once
+        const bk = me.ammoTok[m.w] || (me.ammoTok[m.w] = {tok:cap, t:t});
+        bk.tok = Math.min(cap, bk.tok + (t - bk.t) * (arm.rpm/60) * 1.15); bk.t = t;
+        if(bk.tok < 1) break;                         // really faster than the gun can fire
+        bk.tok -= 1;
         me.lastShot = t;
         room.broadcast({t:'fire', id:me.id, cls:me.cls, x:me.x, y:me.y+1.5, z:me.z, yaw:me.yaw}, me.id);
         if(!Array.isArray(m.hits)) break;
@@ -607,7 +629,7 @@ wss.on('connection', (ws, req) => {
           if(!target || !target.alive || target === me) continue;
           const d = Math.hypot(target.x-me.x, target.y-me.y, target.z-me.z);
           if(d > arm.range + 5) continue;                       // out of the weapon's reach
-          if(room.canSee(me, me.x, me.y+1.5, me.z, target.x, target.y+1.0, target.z, arm.range+5) < 0) continue;
+          if(!room.lineOfFire(me, target, arm.range+5)) continue;
           let dmg = arm.dmg * (h.head ? HEADSHOT : 1);
           const fo = +h.falloff;
           if(Number.isFinite(fo) && fo > 0) dmg *= clamp(fo, 0.3, 1);
@@ -622,6 +644,12 @@ wss.on('connection', (ws, req) => {
 
       case 'mode':
         if(has(MODES, m.mode) && room.humans() <= 1) room.setMode(m.mode);
+        break;
+
+      case 'bots':                        // anyone in the party may switch bot filling
+        room.botsOn = !!m.on;
+        room.fill();
+        room.broadcast({t:'settings', bots: room.botsOn});
         break;
 
       case 'ping':

@@ -25,7 +25,7 @@ function client(name, room, mode){
     if(m.t === 'match')  c.match = m;
     if(m.t === 'snap')   { c.snaps++; c.last = m; }
     if(m.t === 'hurt' && m.id === c.id){ c.hurts.push({by:m.by, from:c.hp, to:m.hp}); c.hp = m.hp; }
-    if(m.t === 'kill')   c.events.push(m);
+    if(m.t === 'kill' || m.t === 'fire') c.events.push(m);
     if(m.t === 'heal' && m.id === c.id) c.hp = m.hp;
   });
   c.send = o => { if(ws.readyState === 1) ws.send(JSON.stringify(o)); };
@@ -82,15 +82,21 @@ function client(name, room, mode){
      'a valid hit applies exactly the weapon damage',
      mine.length ? (mine[0].from + ' -> ' + mine[0].to) : 'no hit registered');
 
-  // rate limit: three AK rounds in the same instant, only one may count
-  b.hurts.length = 0;
-  a.send({t:'shot', w:'ak', hits:[{id:b.id, head:false, falloff:1}]});
-  a.send({t:'shot', w:'ak', hits:[{id:b.id, head:false, falloff:1}]});
-  a.send({t:'shot', w:'ak', hits:[{id:b.id, head:false, falloff:1}]});
+  // rate limit. Over the internet a few shots often arrive bunched together, and
+  // those must all count; but a flood far beyond the gun's rate must not.
+  // Every accepted shot is announced to the others as 'fire', so count those.
+  const fires = () => b.events.filter(e => e.t === 'fire' && e.id === a.id).length;
+  await sleep(1200);                                   // let the rifle's budget refill
+  let f0 = fires();
+  for(let i=0;i<3;i++) a.send({t:'shot', w:'ak', hits:[]});
   await sleep(250);
-  const burst = b.hurts.filter(h => h.by === a.id);
-  ok(burst.length === 1, 'three rounds in one instant only land one',
-     burst.length + ' of 3 accepted');
+  ok(fires() - f0 === 3, 'three rounds arriving bunched all count', (fires() - f0) + ' of 3 accepted');
+  await sleep(1200);
+  f0 = fires();
+  for(let i=0;i<60;i++) a.send({t:'shot', w:'ak', hits:[]});
+  await sleep(300);
+  ok(fires() - f0 <= 12, 'sixty rounds in one instant are capped near one second of fire',
+     (fires() - f0) + ' of 60 accepted');
 
   // a hit claimed from across the map is rejected
   a.move(0, 0, 0);
