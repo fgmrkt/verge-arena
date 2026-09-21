@@ -890,7 +890,7 @@ function facadeMaterial(baseHex, night, moss){
         col *= 1.0 - dirt*0.28*streak;
         col *= 1.0 - 0.10*step(v, 0.45);
         // style 4: a street wall. Its ground floor is split into bays, each one
-        // plain, a roller shutter, a pasted poster, or tagged with spray paint.
+        // plain, a roller shutter or a pasted poster.
         if(style > 3.5 && style < 4.5 && v < 3.3){
           float bayW = winW * 2.0;
           float bi = floor(u / bayW + seed), bf = fract(u / bayW + seed);
@@ -911,17 +911,7 @@ function facadeMaterial(baseHex, night, moss){
             pc = mix(pc, vec3(0.95,0.78,0.20), step(0.66, h2));
             float band = step(0.55, fract((v-0.95)*1.6)) * 0.25;
             pc = mix(pc, vec3(0.95,0.93,0.88), band + 0.35*step(1.95, v));
-            pc *= 0.82 + 0.18*fnoise(vec2(u*6.0, v*6.0));              // weathered paper
             col = mix(col, pc, inP * step(h2, 0.9));
-          } else if(kind < 0.80 && pil < 0.5){                        // spray paint
-            float g = fnoise(vec2(u*1.6, v*2.4) + bi*3.7) * 0.7 + fnoise(vec2(u*5.0, v*5.0)) * 0.3;
-            float tagged = smoothstep(0.58, 0.64, g) * step(0.4, v) * step(v, 2.4);
-            float hue = fh(vec2(bi, 11.0));
-            vec3 paint = mix(vec3(0.95,0.30,0.55), vec3(0.25,0.80,0.85), step(0.5, hue));
-            paint = mix(paint, vec3(0.98,0.85,0.25), step(0.8, hue));
-            float outline = smoothstep(0.54, 0.58, g) - tagged;
-            col = mix(col, paint, tagged*0.85);
-            col = mix(col, vec3(0.08), max(outline, 0.0)*0.7*step(0.4, v)*step(v, 2.4));
           }
           col *= 1.0 - 0.30*step(3.05, v);                            // string course over the shops
         }
@@ -1489,11 +1479,6 @@ const BOT_GUNS = [
   ])
 ];
 
-const BOT_KNIFE = mergeParts([
-  gp(0,0,0.02, 0.022,0.030,0.12, 0x3b3f46),           // handles
-  gp(0,0.004,-0.11, 0.008,0.028,0.16, 0xc9d0d6),      // blade
-  gp(0,-0.008,-0.11, 0.009,0.006,0.15, 0xf4f7fa, {flat:true})
-]);
 const matChar = new THREE.MeshLambertMaterial({vertexColors:true});
 const barFIL = new THREE.PlaneBufferGeometry(1,1); barFIL.translate(0.5,0,0);
 const CLASS_CSS = ['#e0566a','#e9a44a','#9a7fe0','#46bf95'];
@@ -1542,7 +1527,8 @@ function makeBotMesh(cls){
   const shinR  = limb(geoShin);  shinR.position.y = -0.46; thighR.add(shinR);
 
   const gun = limb(BOT_GUNS[cls]); gun.position.set(0.17,1.24,-0.14);
-  const knife = limb(BOT_KNIFE); knife.position.set(0.22,1.08,-0.26); knife.rotation.x = -0.5; knife.visible = false;
+  const knife = makeButterfly().pin; knife.scale.setScalar(1.4);
+  knife.position.set(0.22,1.10,-0.24); knife.rotation.x = -0.6; knife.visible = false;
   g.add(torso, armL, armR, thighL, thighR, gun, knife);
 
   // health plate. depthTest is off and visibility is gated by a line-of-sight check,
@@ -1985,60 +1971,176 @@ function gc(x,y,z,r,len,c,ex){
   return o;
 }
 
-// Butterfly knife: a blade on a pivot pin and two channel handles. The "safe"
-// handle stays in your hand; the blade and the "bite" handle swing round the pin,
-// which is what the draw flip and the F inspect animate.
-const KSTEEL=0xc9d0d6, KEDGE=0xf4f7fa, KDARK=0x2a2e33, KHANDLE=0x3b3f46, KACC=0xc8354c;
+// ---------------------------------------------------------------------------
+// Butterfly knife. Real profiles, not boxes: the blade and both handles are 2D
+// outlines extruded with a bevel, so edges catch the light the way ground steel
+// does. The safe handle sits in the hand; the blade and the bite handle swing
+// round the pivot, which is everything the flips animate.
+//
+// Model axes: the knife points down -z from the pivot, handles run back along +z,
+// the flat of the blade faces ±x.
+// ---------------------------------------------------------------------------
+let knifeEnv = null;
+function knifeEnvMap(){
+  // a tiny studio: bright softbox overhead, a horizon band, dark floor. Enough for
+  // polished steel to look like steel instead of grey plastic.
+  if(knifeEnv) return knifeEnv;
+  const face = (top, mid, bot, band)=>{
+    const c = document.createElement('canvas'); c.width = c.height = 64;
+    const g = c.getContext('2d');
+    const gr = g.createLinearGradient(0,0,0,64);
+    gr.addColorStop(0, top); gr.addColorStop(0.48, mid); gr.addColorStop(1, bot);
+    g.fillStyle = gr; g.fillRect(0,0,64,64);
+    if(band){ g.fillStyle = 'rgba(255,255,255,0.85)'; g.fillRect(0, 26, 64, 5); }
+    return c;
+  };
+  const side = face('#dfe7ee', '#8d96a0', '#2a2e33', true);
+  const imgs = [side, side, face('#ffffff','#f4f8fb','#e8eef3'), face('#2a2d31','#1c1e21','#141619'), side, side];
+  knifeEnv = new THREE.CubeTexture(imgs);
+  knifeEnv.needsUpdate = true;
+  return knifeEnv;
+}
+function extrudeProfile(shape, depth, bevel){
+  const g = new THREE.ExtrudeBufferGeometry(shape, {depth:depth, bevelEnabled:!!bevel, bevelThickness:bevel||0,
+                                                    bevelSize:(bevel||0)*0.8, bevelSegments:2, curveSegments:10});
+  // shape x -> forward (-z), shape y -> up, extrusion -> thickness along x
+  g.rotateY(Math.PI/2);
+  g.translate(-depth/2, 0, 0);
+  g.computeVertexNormals();
+  return g;
+}
+function bladeShape(){
+  // spear-point blade with a clipped spine; x is distance from the pivot in metres
+  const s = new THREE.Shape();
+  s.moveTo(0.004, -0.0070);
+  s.quadraticCurveTo(0.010, -0.0125, 0.020, -0.0122);          // choil
+  s.lineTo(0.118, -0.0110);                                     // edge
+  s.quadraticCurveTo(0.150, -0.0090, 0.172, 0.0010);            // belly sweeps up to the point
+  s.lineTo(0.140, 0.0082);                                      // clip back along the swedge
+  s.lineTo(0.030, 0.0102);                                      // spine
+  s.quadraticCurveTo(0.012, 0.0110, 0.006, 0.0070);             // kick
+  s.quadraticCurveTo(-0.004, 0.0000, 0.004, -0.0070);           // round the tang
+  const pin = new THREE.Path(); pin.absarc(0.0, 0.0, 0.0022, 0, Math.PI*2, true);
+  s.holes.push(pin);
+  return s;
+}
+function handleShape(){
+  // skeletonised channel handle running back from the pivot (negative x)
+  const L = 0.128, H = 0.0125, r = 0.0055;
+  const s = new THREE.Shape();
+  s.moveTo(0.006, -H);
+  s.lineTo(-L + r, -H);
+  s.quadraticCurveTo(-L, -H, -L, -H + r);
+  s.lineTo(-L, H - r);
+  s.quadraticCurveTo(-L, H, -L + r, H);
+  s.lineTo(0.006, H);
+  s.absarc(0.006, 0, H, Math.PI/2, -Math.PI/2, true);          // rounded head round the pivot
+  for(let i=0;i<5;i++){                                        // the cut-outs
+    const x0 = -0.020 - i*0.020, w = 0.013, h = 0.0056;
+    const hole = new THREE.Path();
+    hole.moveTo(x0, -h); hole.lineTo(x0 - w, -h);
+    hole.absarc(x0 - w, 0, h, -Math.PI/2, Math.PI/2, true);
+    hole.lineTo(x0, h);
+    hole.absarc(x0, 0, h, Math.PI/2, -Math.PI/2, true);
+    s.holes.push(hole);
+  }
+  const pin = new THREE.Path(); pin.absarc(0.006, 0, 0.0024, 0, Math.PI*2, true);
+  s.holes.push(pin);
+  return s;
+}
+const knifeMats = {};
+function knifeMaterials(){
+  if(knifeMats.steel) return knifeMats;
+  const env = knifeEnvMap();
+  knifeMats.steel = new THREE.MeshPhongMaterial({color:0xcfd5db, specular:0xffffff, shininess:140,
+                                                 envMap:env, reflectivity:0.55, combine:THREE.MixOperation});
+  knifeMats.handle = new THREE.MeshPhongMaterial({color:0x1b1e22, specular:0x6a727c, shininess:70,
+                                                  envMap:env, reflectivity:0.12, combine:THREE.MixOperation});
+  knifeMats.pin = new THREE.MeshPhongMaterial({color:0xb8bec5, specular:0xffffff, shininess:120,
+                                               envMap:env, reflectivity:0.5, combine:THREE.MixOperation});
+  knifeMats.accent = new THREE.MeshPhongMaterial({color:0xc8354c, specular:0x662222, shininess:40});
+  knifeMats.glove = new THREE.MeshLambertMaterial({color:0x2c3036});
+  knifeMats.gloveDark = new THREE.MeshLambertMaterial({color:0x202328});
+  knifeMats.sleeve = new THREE.MeshLambertMaterial({color:0x444c57});
+  return knifeMats;
+}
+// the knife on its own: used in your hand and, scaled, on other players
+function makeButterfly(){
+  const M = knifeMaterials();
+  const BT = 0.0034, HT = 0.0040;                     // blade and handle thickness
+  const pin = new THREE.Group();
+  const blade = new THREE.Group();
+  blade.add(new THREE.Mesh(extrudeProfile(bladeShape(), BT, 0.0011), M.steel));
+  pin.add(blade);
+  const handle = side => {
+    const h = new THREE.Group();
+    const m = new THREE.Mesh(extrudeProfile(handleShape(), HT, 0.0009), M.handle);
+    m.position.x = side * (BT/2 + HT/2 + 0.0016);
+    h.add(m);
+    // pivot screw and the end screw, both sides
+    const screw = new THREE.CylinderBufferGeometry(0.0030, 0.0030, 0.0022, 14);
+    screw.rotateZ(Math.PI/2);
+    const a = new THREE.Mesh(screw, M.pin); a.position.set(side*(BT/2 + HT + 0.0025), 0, 0); h.add(a);
+    const b = new THREE.Mesh(screw, M.pin); b.position.set(side*(BT/2 + HT + 0.0025), 0, 0.118); h.add(b);
+    return h;
+  };
+  const safe = handle(-1), bite = handle(1);
+  // latch on the bite handle
+  const latch = new THREE.Mesh(new THREE.BoxBufferGeometry(0.0022, 0.0030, 0.020), M.pin);
+  latch.position.set(0.0012, -0.0120, 0.112); bite.add(latch);
+  pin.add(safe, bite);
+  return {pin, blade, safe, bite};
+}
+// a gloved hand wrapped round the safe handle, and the sleeve behind it
+function makeKnifeHand(){
+  const M = knifeMaterials();
+  const hand = new THREE.Group();
+  const sph = (rx, ry, rz, mat)=>{ const m = new THREE.Mesh(new THREE.SphereBufferGeometry(1, 16, 12), mat); m.scale.set(rx, ry, rz); return m; };
+  const cyl = (r0, r1, len, mat)=>{ const g = new THREE.CylinderBufferGeometry(r1, r0, len, 14); g.translate(0, len/2, 0); return new THREE.Mesh(g, mat); };
+  // palm hugs the handles from the right-hand side
+  const palm = sph(0.028, 0.030, 0.040, M.glove); palm.position.set(0.020, -0.004, 0.070); hand.add(palm);
+  // four fingers curl under and round the handles
+  for(let i=0;i<4;i++){
+    const f = new THREE.Group();
+    f.position.set(0.012, -0.016, 0.040 + i*0.018);
+    const p1 = cyl(0.0078, 0.0072, 0.020, M.glove); p1.rotation.z = 2.2; f.add(p1);
+    const k = new THREE.Group(); k.position.set(-0.016, -0.012, 0); f.add(k);
+    const p2 = cyl(0.0072, 0.0064, 0.018, M.glove); p2.rotation.z = 0.95; k.add(p2);
+    const tip = sph(0.0066, 0.0066, 0.0066, M.glove); tip.position.set(-0.014, 0.010, 0); k.add(tip);
+    hand.add(f);
+  }
+  // thumb along the top of the handle, towards the pivot
+  const th = cyl(0.0090, 0.0075, 0.034, M.glove); th.position.set(0.008, 0.012, 0.060);
+  th.rotation.set(-1.45, 0, 0.25); hand.add(th);
+  const thTip = sph(0.0078, 0.0070, 0.0090, M.glove); thTip.position.set(0.004, 0.014, 0.026); hand.add(thTip);
+  // knuckle strap and wrist
+  const strap = sph(0.030, 0.012, 0.028, M.gloveDark); strap.position.set(0.030, 0.008, 0.074); hand.add(strap);
+  const wrist = cyl(0.030, 0.026, 0.060, M.glove); wrist.position.set(0.024, -0.004, 0.100);
+  wrist.rotation.x = Math.PI/2 + 0.15; hand.add(wrist);
+  const cuff = cyl(0.036, 0.034, 0.030, M.gloveDark); cuff.position.set(0.024, -0.004, 0.150);
+  cuff.rotation.x = Math.PI/2 + 0.15; hand.add(cuff);
+  const sleeve = cyl(0.050, 0.042, 0.24, M.sleeve); sleeve.position.set(0.026, -0.010, 0.170);
+  sleeve.rotation.x = Math.PI/2 + 0.18; hand.add(sleeve);
+  return hand;
+}
+// idle pose of the knife in the hand; the animations are offsets from this
+const KNIFE_BASE = {px:0.030, py:0.030, pz:-0.060, rx:0.38, ry:0.75, rz:-1.20};
 function buildKnife(){
   const g = new THREE.Group();
-  const knife = new THREE.Group();                 // whole knife: its pose in the hand
-  const pin = new THREE.Group();                   // the pivot everything swings about
-  knife.add(pin);
-  const bladeG = new THREE.Group();
-  bladeG.add(new THREE.Mesh(mergeParts([
-    gp(0,0.000,-0.112, 0.0055,0.030,0.170, KSTEEL),              // blade body
-    gp(0,0.011,-0.205, 0.0055,0.012,0.045, KSTEEL, {rx:-0.42}),  // clip point
-    gp(0,-0.006,-0.200, 0.0055,0.020,0.050, KSTEEL, {rx:0.30}),  // belly up to the tip
-    gp(0,-0.0125,-0.110, 0.0060,0.0045,0.165, KEDGE, {flat:true}),// honed edge catches the light
-    gp(0,0.004,-0.100, 0.0062,0.006,0.090, 0x9aa3ab),            // fuller
-    gp(0,-0.003,-0.018, 0.0070,0.034,0.036, KDARK),              // tang round the pin
-    gp(0,0.0, 0.0, 0.021,0.010,0.010, 0x80888f)                  // pin head
-  ]), matGun));
-  pin.add(bladeG);
-  function handle(side){
-    const h = new THREE.Group();
-    const parts = [
-      gp(side*0.0095, 0, 0.070, 0.0070, 0.026, 0.140, KHANDLE),  // channel
-      gp(side*0.0095, 0, 0.143, 0.0080, 0.028, 0.012, KDARK),    // end cap
-      gp(side*0.0095, 0, 0.004, 0.0080, 0.030, 0.014, KDARK)     // head at the pin
-    ];
-    for(let i=0;i<5;i++) parts.push(gp(side*0.0132, 0, 0.030 + i*0.022, 0.0015, 0.011, 0.012, KDARK)); // skeleton holes
-    parts.push(gp(side*0.0133, 0.0, 0.118, 0.0014, 0.018, 0.018, KACC));                            // accent inlay
-    h.add(new THREE.Mesh(mergeParts(parts), matGun));
-    return h;
-  }
-  const safe = handle(-1), bite = handle(1);
-  pin.add(safe, bite);
-  const latch = new THREE.Mesh(mergeParts([gp(0.0, -0.013, 0.150, 0.020, 0.004, 0.022, 0x80888f)]), matGun);
-  bite.add(latch);
-  // the hand closes round the safe handle
-  const hand = new THREE.Mesh(mergeParts([
-    gp(0.004,-0.004,0.080, 0.058,0.052,0.090, GLOVE),
-    gp(-0.024,0.018,0.052, 0.022,0.020,0.030, GLOVE, {rz:0.3}),        // thumb
-    gp(0.012,-0.040,0.150, 0.080,0.090,0.200, CUFF, {rx:0.55})           // wrist and sleeve
-  ]), matGun);
-  knife.add(hand);
-  knife.scale.setScalar(1.2);                       // a touch larger than life so it reads on screen
-  knife.position.set(0.03, 0.04, -0.08);
-  knife.rotation.set(0.55, 0.45, -1.0);             // tip up and inward, flat of the blade towards you
-  g.add(knife);
+  const root = new THREE.Group();                  // the hand and everything it holds
+  const K = makeButterfly();
+  K.pin.scale.setScalar(1.25);
+  root.add(K.pin, makeKnifeHand());
+  root.position.set(KNIFE_BASE.px, KNIFE_BASE.py, KNIFE_BASE.pz);
+  root.rotation.set(KNIFE_BASE.rx, KNIFE_BASE.ry, KNIFE_BASE.rz);
+  g.add(root);
   // the frame code expects these on every weapon
   const bolt = new THREE.Object3D(); g.add(bolt);
   const flash = new THREE.Group(); flash.visible = false;
   const dummy = new THREE.Mesh(new THREE.PlaneBufferGeometry(0.01,0.01), matFlash.clone());
   flash.add(dummy); g.add(flash);
   g.userData = {flash:flash, cone:dummy, star:dummy, bolt:bolt, boltZ:0, kind:'knife', lens:null, reticle:null,
-                knife:knife, blade:bladeG, bite:bite, safe:safe, base:{px:0.03, py:0.04, pz:-0.08, rx:0.55, ry:0.45, rz:-1.0}};
+                knife:root, blade:K.blade, bite:K.bite, safe:K.safe, base:KNIFE_BASE};
   return g;
 }
 
@@ -2575,7 +2677,7 @@ function facingOf(b){
 function knifeAttack(now, heavy){
   const w = curW();
   if(!player.alive || now < player.nextShot) return;
-  if(vm.drawT > 0.25) return;                          // still flipping it open
+  if(vm.drawT > 0.35) return;                          // still flipping it open (about 0.6 s)
   player.nextShot = now + (heavy ? 0.95 : 60/w.rpm);
   vm.inspectT = 0;
   if(heavy) vm.stabT = 1; else { vm.slashT = 1; vm.slashSide = -(vm.slashSide || 1); }
@@ -3459,7 +3561,7 @@ document.addEventListener('keydown', e=>{
     else if(player.ads) exitADS(); else if(player.alive) player.ads = true;
   }
   if(e.code==='KeyF' && player.loadout.length && curW().melee && player.alive &&
-     vm.slashT <= 0 && vm.stabT <= 0 && vm.drawT <= 0.05) vm.inspectT = 1.9;
+     vm.slashT <= 0 && vm.stabT <= 0 && vm.drawT <= 0.05) vm.inspectT = 1;
   if(e.code==='KeyM') toggleMute();
   if(e.code.startsWith('Digit')){
     const n = parseInt(e.code.slice(5),10)-1;
@@ -3691,55 +3793,87 @@ function updatePlayer(dt, now){
 }
 
 function easeIO(t){ return t<0.5 ? 2*t*t : 1 - Math.pow(-2*t+2, 2)/2; }
+function easeOut(t){ return 1 - Math.pow(1-t, 3); }
+const clamp01 = t => t < 0 ? 0 : (t > 1 ? 1 : t);
+function seg(t, a, b){ return clamp01((t - a) / (b - a)); }           // 0..1 inside [a,b]
+// Animation in the style of a balisong in CS2: the draw flips it open with the
+// bite handle swinging out and the blade spinning through, the inspect keeps it
+// twirling and fanning, slashes are fast diagonal swipes, the stab a lunge.
+const KNIFE_DRAW = 0.95, KNIFE_INSPECT = 3.0, KNIFE_SLASH = 0.30, KNIFE_STAB = 0.62;
 function animateKnife(u, dt){
   const B = u.base, K = u.knife;
-  vm.drawT   = Math.max(0, vm.drawT   - dt*1.9);
-  vm.slashT  = Math.max(0, vm.slashT  - dt*3.4);
-  vm.stabT   = Math.max(0, vm.stabT   - dt*1.8);
-  vm.inspectT= Math.max(0, vm.inspectT- dt);
+  vm.drawT    = Math.max(0, vm.drawT    - dt/KNIFE_DRAW);
+  vm.slashT   = Math.max(0, vm.slashT   - dt/KNIFE_SLASH);
+  vm.stabT    = Math.max(0, vm.stabT    - dt/KNIFE_STAB);
+  vm.inspectT = Math.max(0, vm.inspectT - dt/KNIFE_INSPECT);
   let px = B.px, py = B.py, pz = B.pz, rx = B.rx, ry = B.ry, rz = B.rz;
   let blade = 0, bite = 0;
-  // draw: the blade spins out of the handles one and a half times and the bite handle swings home
+  const PI = Math.PI;
+
   if(vm.drawT > 0){
-    const d = easeIO(vm.drawT);
-    blade = d * Math.PI * 3;
-    bite = -Math.sin(vm.drawT * Math.PI) * Math.PI * 0.95;
-    py -= d * 0.10; rx -= d * 0.5;
+    const t = 1 - vm.drawT;                            // 0 -> 1
+    // rise from below, closed, rolling in the fingers
+    const up = easeOut(seg(t, 0, 0.30));
+    py -= (1 - up) * 0.16; rx -= (1 - up) * 0.9; rz += (1 - up) * 1.2;
+    // closed: blade tucked between the handles
+    blade = PI;
+    // the flip: bite handle swings out over the top while the blade rolls through
+    const f = seg(t, 0.22, 0.72);
+    bite  = -Math.sin(f * PI) * PI * 1.02;
+    blade = PI - easeIO(f) * PI * 3;                  // one and a half turns, lands open
+    // a flick of the wrist as it snaps shut on the hand, then a small settle
+    const snap = seg(t, 0.70, 1.0);
+    rz += Math.sin(snap * PI) * 0.28; px += Math.sin(snap * PI) * 0.012;
+    ry += Math.sin(f * PI) * 0.35;
   }
-  // light slash: a wide arc across the screen, alternating sides
-  if(vm.slashT > 0){
-    const p = 1 - vm.slashT, e = easeIO(p), sd = vm.slashSide;
-    const swing = Math.sin(p * Math.PI);
-    px += sd * (0.10 - e*0.28);
-    py += swing * 0.05;
-    pz -= swing * 0.10;
-    rz += sd * (0.95 - e*2.1);
-    ry += sd * (0.55 - e*1.1);
-    rx -= swing * 0.25;
-  }
-  // heavy stab: draw back, then drive it forward
-  if(vm.stabT > 0){
-    const p = 1 - vm.stabT;
-    const back = p < 0.35 ? easeIO(p/0.35) : 1 - easeIO(Math.min(1,(p-0.35)/0.25));
-    const drive = p < 0.35 ? 0 : Math.sin(Math.min(1, (p-0.35)/0.65) * Math.PI);
-    pz += back*0.07 - drive*0.24;
-    py += back*0.03 - drive*0.02;
-    rx += -back*0.35 - drive*0.30;
-    ry -= drive*0.25;
-  }
-  // inspect: roll it over in the hand, then two quick flips of the bite handle
+
   if(vm.inspectT > 0){
-    const p = 1 - vm.inspectT/1.9;
-    const lift = Math.sin(Math.min(1, p*1.15) * Math.PI);
-    px -= lift*0.07; py += lift*0.06; pz -= lift*0.02;
-    rz += Math.sin(p*Math.PI) * 1.4;
-    ry -= lift*0.45;
-    if(p > 0.35 && p < 0.95){
-      const q = (p - 0.35)/0.6;
-      bite = -Math.sin(q*Math.PI*2) * Math.PI * 0.9;      // the bite handle swings out and back, twice
-      blade = easeIO(q) * Math.PI * 4;                    // while the blade rolls over twice
+    const t = 1 - vm.inspectT;                         // 0 -> 1 over three seconds
+    const lift = easeIO(seg(t, 0, 0.12)) * (1 - easeIO(seg(t, 0.88, 1)));
+    // bring it in towards the middle of the screen and turn the flat to you
+    px -= lift * 0.075; py += lift * 0.030; pz += lift * 0.02;
+    ry -= lift * 0.55; rz += lift * 0.45;
+    // three fans: each one swings the bite handle round while the blade spins a full
+    // turn, the hand rolling with it
+    const f = seg(t, 0.12, 0.82), cycles = 3;
+    const c = f * cycles, ci = Math.floor(c), cf = c - ci;
+    if(f > 0 && f < 1){
+      const e = easeIO(cf);
+      bite  = -Math.sin(e * PI) * PI * (ci === 1 ? 1.0 : 0.95);
+      blade = (ci % 2 === 0 ? 1 : -1) * e * PI * 2;
+      rz += Math.sin(cf * PI * 2) * 0.55 * lift;
+      rx += Math.sin(cf * PI) * 0.35 * lift;
+      py += Math.sin(cf * PI) * 0.018;
     }
+    // a final twirl around the hand before it settles back
+    const tw = seg(t, 0.82, 0.96);
+    if(tw > 0 && tw < 1){ ry += Math.sin(tw * PI) * 0.9; rz -= easeIO(tw) * PI * 2; }
   }
+
+  if(vm.slashT > 0){
+    const t = 1 - vm.slashT, sd = vm.slashSide;
+    // wind up a touch, whip across diagonally, recover
+    const wind = seg(t, 0, 0.18), cut = seg(t, 0.18, 0.62), back = seg(t, 0.62, 1);
+    const a = easeIO(cut) - easeIO(back) * 0;
+    const across = (wind * 0.25 * (1 - cut) ) + easeOut(cut) * (1 - easeIO(back));
+    px += sd * (0.06 * wind - 0.22 * across);
+    py += 0.05 * wind - 0.07 * across;
+    pz -= 0.10 * Math.sin(clamp01(t / 0.7) * PI);
+    rz += sd * (0.35 * wind - 1.30 * across);
+    ry += sd * (0.25 * wind - 0.70 * across);
+    rx -= 0.30 * Math.sin(cut * PI);
+  }
+
+  if(vm.stabT > 0){
+    const t = 1 - vm.stabT;
+    const draw = easeIO(seg(t, 0, 0.30)), drive = seg(t, 0.30, 0.55), ret = easeIO(seg(t, 0.62, 1));
+    const lunge = easeOut(drive) * (1 - ret);
+    pz += draw * 0.07 * (1 - drive) - lunge * 0.26;
+    px -= lunge * 0.05; py += draw * 0.03 - lunge * 0.03;
+    rx += -draw * 0.40 * (1 - drive) - lunge * 0.35;
+    ry -= lunge * 0.35; rz += lunge * 0.35;
+  }
+
   K.position.set(px, py, pz);
   K.rotation.set(rx, ry, rz);
   u.blade.rotation.x = blade;
