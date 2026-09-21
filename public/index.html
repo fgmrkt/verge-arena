@@ -73,17 +73,39 @@
     color:var(--paper);border:0;box-shadow:inset 0 0 0 1px var(--line);font:inherit;font-size:.92rem}
   .tin:focus{outline:none;box-shadow:inset 0 0 0 1px var(--good)}
   .btn.mini{padding:.52rem .8rem;font-size:.84rem;flex:none}
-  .lobby{margin:.55rem 0 1.15rem;padding:.65rem .75rem;border-radius:3px;
-    background:rgba(8,12,16,.45);box-shadow:inset 0 0 0 1px var(--line)}
-  .lobby .netstate{font-size:.85rem;font-weight:600}
-  .who{display:flex;flex-wrap:wrap;gap:.3rem;margin-top:.5rem}
-  .who span{display:inline-flex;align-items:center;gap:.4rem;padding:.24rem .55rem;
-    border-radius:2px;background:rgba(242,240,234,.09);font-size:.82rem}
-  .who span.me{background:var(--paper);color:var(--ink);font-weight:600}
-  .who span.bot{opacity:.55}
-  .who i{width:6px;height:6px;border-radius:50%;background:var(--good);font-style:normal;flex:none}
-  .who span.bot i{background:var(--mute)}
-  .lobby .hint{margin-top:.5rem;font-size:.77rem;color:var(--mute);line-height:1.5}
+  /* party card: your code up top, who is in it, how friends get in */
+  .party{margin:1.15rem 0 1.25rem;border-radius:4px;background:rgba(8,12,16,.5);
+    box-shadow:inset 0 0 0 1px var(--line);overflow:hidden}
+  .phead{display:flex;align-items:flex-end;justify-content:space-between;gap:1rem;
+    padding:.85rem .95rem .7rem;background:linear-gradient(180deg,rgba(47,166,160,.13),rgba(47,166,160,0))}
+  .plabel{font-size:.72rem;letter-spacing:.14em;text-transform:uppercase;color:var(--mute)}
+  .pcode{font-family:ui-monospace,Menlo,Consolas,monospace;font-size:1.9rem;font-weight:700;
+    letter-spacing:.2em;line-height:1.1;margin-top:.15rem;user-select:all}
+  .pstat{text-align:right;font-size:.8rem;line-height:1.5}
+  .pstat .netstate{font-weight:600;font-size:.82rem;display:inline-flex;align-items:center;gap:.35rem}
+  .pstat .netstate::before{content:"";width:7px;height:7px;border-radius:50%;background:currentColor}
+  .pstat .pcount{color:var(--mute)}
+  .pbtns{display:flex;gap:.4rem;padding:0 .95rem .8rem;flex-wrap:wrap}
+  .pbtns .btn{padding:.45rem .75rem;font-size:.82rem}
+  .members{border-top:1px solid var(--line);padding:.35rem 0}
+  .mrow{display:flex;align-items:center;gap:.65rem;padding:.38rem .95rem;font-size:.9rem}
+  .mrow .av{width:26px;height:26px;border-radius:50%;flex:none;display:grid;place-items:center;
+    font-size:.78rem;font-weight:700;color:var(--ink)}
+  .mrow .nm{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+  .mrow .tag2{font-size:.7rem;letter-spacing:.08em;text-transform:uppercase;color:var(--mute)}
+  .mrow.me .tag2{color:var(--good)}
+  .mrow.bots{color:var(--mute);font-size:.82rem}
+  .mrow.bots .av{background:rgba(242,240,234,.1);color:var(--mute)}
+  .mrow.wait .av{background:none;box-shadow:inset 0 0 0 1px dashed var(--line);border:1px dashed var(--line)}
+  .mrow.wait{color:var(--mute);font-size:.82rem}
+  .pplay{padding:.5rem .95rem;font-size:.78rem;color:var(--mute);border-top:1px solid var(--line)}
+  .pplay b{color:var(--paper);font-weight:600}
+  .pjoin{display:flex;gap:.4rem;padding:.7rem .95rem .85rem;border-top:1px solid var(--line);align-items:center}
+  .pjoin .tin{font-family:ui-monospace,Menlo,Consolas,monospace;letter-spacing:.14em;text-transform:uppercase}
+  .pjoin .tin::placeholder{letter-spacing:0;text-transform:none;font-family:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+  .perr{padding:0 .95rem .7rem;font-size:.76rem;color:var(--hot);margin-top:-.4rem}
+  .pausecode{display:flex;align-items:center;gap:.7rem;margin-bottom:1.1rem;font-size:.85rem;color:var(--mute)}
+  .pausecode b{font-family:ui-monospace,Menlo,Consolas,monospace;color:var(--paper);letter-spacing:.14em;font-size:1rem}
   .netstate.live{color:var(--good)} .netstate.lost{color:var(--hot)}
   .netstate.connecting{color:#e8c34b}
   .go{margin-top:1.4rem;display:flex;align-items:center;gap:1rem;flex-wrap:wrap}
@@ -297,15 +319,29 @@
       <div>
         <div class="fieldname">Your name</div>
         <input id="pname" class="tin" maxlength="14" placeholder="Player" value="">
-        <div class="fieldname" style="margin-top:1.15rem">Lobby</div>
-        <div class="row2">
-          <input id="proom" class="tin" maxlength="24" placeholder="main" value="">
-          <button class="btn ghost mini" id="copylink" type="button">Copy invite</button>
-        </div>
-        <div class="lobby">
-          <div class="netstate" id="netstate">Offline</div>
-          <div class="who" id="lobbylist"></div>
-          <div class="hint" id="lobbyhint"></div>
+        <div class="party" id="party">
+          <div class="phead">
+            <div>
+              <div class="plabel">Your party</div>
+              <div class="pcode" id="pcode">-----</div>
+            </div>
+            <div class="pstat">
+              <div class="netstate" id="netstate">Offline</div>
+              <div class="pcount" id="pcount"></div>
+            </div>
+          </div>
+          <div class="pbtns">
+            <button class="btn" id="copylink" type="button">Copy invite link</button>
+            <button class="btn ghost" id="copycode" type="button">Copy code</button>
+            <button class="btn ghost" id="newparty" type="button">New party</button>
+          </div>
+          <div class="members" id="lobbylist"></div>
+          <div class="pplay" id="lobbyhint"></div>
+          <div class="pjoin">
+            <input id="proom" class="tin" maxlength="12" placeholder="Got a code from a friend?" value="" autocomplete="off" spellcheck="false">
+            <button class="btn ghost mini" id="joinparty" type="button">Join</button>
+          </div>
+          <div class="perr hidden" id="perr"></div>
         </div>
         <div class="fieldname">Mode</div>
         <div class="choices" id="modePick"></div>
@@ -360,6 +396,8 @@
 <!-- PAUSE -->
 <div id="pause" class="sheet hidden"><div class="card">
   <h2>Paused</h2>
+  <div class="pausecode">Party <b id="pcode2">-----</b>
+    <button class="btn ghost mini" id="copylink2" type="button">Copy invite link</button></div>
   <div class="fieldname">Mouse sensitivity</div>
   <div class="slider"><input id="sens2" type="range" min="0" max="200" value="100"><span class="val" id="sens2v">1.00</span></div>
   <div class="fieldname">Volume</div>
@@ -2631,11 +2669,10 @@ function wireNet(){
       let humans = 1;
       Net.remote.forEach(r => { if(!r.bot) humans++; });
       const map = {
-        offline:   'Offline — playing against bots',
+        offline:   'Offline',
         connecting:'Connecting…',
-        live:      humans === 1 ? 'Online — waiting for friends'
-                 : 'Online — ' + humans + ' people in this lobby',
-        lost:      'Connection lost — retrying'
+        live:      'Online',
+        lost:      'Reconnecting…'
       };
       el2.textContent = map[Net.status] || Net.status;
       el2.className = 'netstate ' + Net.status;
@@ -3132,35 +3169,70 @@ function showOops(msg){
 window.addEventListener('error', e=>showOops(e.message + (e.lineno ? '  (line ' + e.lineno + ')' : '')));
 window.addEventListener('unhandledrejection', e=>showOops('async: ' + (e.reason && e.reason.message || e.reason)));
 
-// who is in this lobby right now, and how a friend gets in
+// ---- parties -----------------------------------------------------------
+// Every browser gets its own party code, so you never land in a stranger's
+// lobby by accident. Friends join with the code or the invite link.
+const CODE_CHARS = 'ABCDEFGHJKMNPQRSTUVWXYZ23456789';     // no 0/O or 1/I/L mix-ups
+function newCode(){
+  let c = '';
+  const rnd = (window.crypto && crypto.getRandomValues)
+    ? () => { const a = new Uint32Array(1); crypto.getRandomValues(a); return a[0]; }
+    : () => (Math.random()*4294967296)>>>0;
+  for(let i=0;i<5;i++) c += CODE_CHARS[rnd() % CODE_CHARS.length];
+  return c;
+}
+function cleanCode(t){ return String(t || '').toUpperCase().replace(/[^A-Z0-9]/g, '').slice(0, 12); }
+let party = '';
+function setParty(code, save){
+  party = cleanCode(code) || newCode();
+  if(save !== false) localStorage_safe('verge.party', party);
+  if(el('pcode')) el('pcode').textContent = party;
+  if(el('pcode2')) el('pcode2').textContent = party;
+  try { history.replaceState(null, '', inviteLink()); } catch(e){}
+  renderLobby();
+}
 function inviteLink(){
-  const room = ((el('proom').value || '').trim()) || 'main';
   const base = (location.origin || '') + (location.pathname || '/');
-  return base + '?room=' + encodeURIComponent(room);
+  return base + '?party=' + encodeURIComponent(party);
+}
+// soft colour per name, so the same friend always has the same dot
+function nameHue(n){ let h = 0; for(let i=0;i<n.length;i++) h = (h*31 + n.charCodeAt(i)) >>> 0; return h % 360; }
+function memberRow(name, cls, tag){
+  const n = String(name || '?');
+  return '<div class="mrow ' + cls + '"><span class="av" style="background:hsl(' + nameHue(n) +
+         ',55%,68%)">' + esc(n.charAt(0).toUpperCase()) + '</span><span class="nm">' + esc(n) +
+         '</span><span class="tag2">' + tag + '</span></div>';
 }
 function renderLobby(){
-  const list = el('lobbylist'), hint = el('lobbyhint');
+  const list = el('lobbylist'), hint = el('lobbyhint'), count = el('pcount');
   if(!list || !hint) return;
+  const me = ((el('pname').value || '').trim()) || 'Player';
   if(!Net.on){
-    list.innerHTML = '';
+    list.innerHTML = memberRow(me, 'me', 'You');
+    if(count) count.textContent = '';
     hint.textContent = Net.url()
-      ? 'Not connected, so you are playing bots on your own machine.'
+      ? (Net.status === 'connecting' ? 'Joining party ' + party + '…'
+                                     : 'Not connected, so you play bots on your own machine.')
       : 'Open the game from its web address to play with other people.';
     return;
   }
-  const me = ((el('pname').value || '').trim()) || 'Player';
-  const humans = [], botCount = [];
-  Net.remote.forEach(r => { if(r.bot) botCount.push(r); else humans.push(r.name); });
-  let html = '<span class="me"><i></i>' + esc(me) + '</span>';
-  humans.forEach(n => { html += '<span><i></i>' + esc(n) + '</span>'; });
-  if(botCount.length) html += '<span class="bot"><i></i>' + botCount.length +
-                              ' bot' + (botCount.length > 1 ? 's' : '') + '</span>';
+  const humans = []; let botCount = 0;
+  Net.remote.forEach(r => { if(r.bot) botCount++; else humans.push(r.name); });
+  let html = memberRow(me, 'me', 'You');
+  humans.forEach(n => { html += memberRow(n, '', 'In party'); });
+  if(!humans.length){
+    html += '<div class="mrow wait"><span class="av"></span><span class="nm">Waiting for friends — send them your link</span></div>';
+  }
+  if(botCount) html += '<div class="mrow bots"><span class="av">+</span><span class="nm">' + botCount +
+                       ' bot' + (botCount > 1 ? 's' : '') + ' fill the empty spots</span></div>';
   list.innerHTML = html;
-  hint.textContent = humans.length === 0
-    ? 'Nobody else here yet. Send a friend your invite link and they land in this lobby.'
-    : (humans.length === 1
-        ? humans[0] + ' is in this lobby with you.'
-        : humans.length + ' other people are in this lobby with you.');
+  const people = humans.length + 1;
+  if(count) count.textContent = people + (people === 1 ? ' player' : ' players');
+  const m = Net.match;
+  hint.innerHTML = m
+    ? 'Party is playing <b>' + esc(m.label || m.mode) + '</b> on <b>' + esc(m.mapName || '') + '</b>' +
+      (humans.length ? ' · with friends here, the party picks the mode' : '')
+    : '';
 }
 function localStorage_safe(k, v){
   try { if(v === undefined) return window.localStorage.getItem(k); window.localStorage.setItem(k, v); }
@@ -3233,7 +3305,7 @@ function wireMenu(){
   function ensureConnected(){
     if(!Net.url()) return;
     const nm = (el('pname').value || '').trim() || 'Player';
-    const rm = (el('proom').value || '').trim() || 'main';
+    const rm = party || 'main';
     if(Net.on && Net.name === nm && Net.room === rm){ Net.sendMode(MODE().key); return; }
     Net.disconnect();
     Net.connect({name:nm, room:rm, mode:MODE().key, cls:S.cls});
@@ -3241,36 +3313,48 @@ function wireMenu(){
   let reconnectTimer = 0;
   const queueReconnect = ()=>{ clearTimeout(reconnectTimer); reconnectTimer = setTimeout(ensureConnected, 700); };
   el('pname').oninput = ()=>{ renderLobby(); queueReconnect(); };
-  el('proom').oninput = ()=>{
-    renderLobby();
-    // keep the address bar on the current lobby so it can just be copied
-    try { history.replaceState(null, '', inviteLink()); } catch(e){}
-    queueReconnect();
-  };
-  el('copylink').onclick = ()=>{
-    const url = inviteLink(), b = el('copylink'), was = b.textContent;
-    const done = ()=>{ b.textContent = 'Copied'; setTimeout(()=>{ b.textContent = was; }, 1500); };
+  const copyText = (text, btn)=>{
+    const was = btn.textContent;
+    const done = ()=>{ btn.textContent = 'Copied!'; setTimeout(()=>{ btn.textContent = was; }, 1500); };
     try {
       if(navigator.clipboard && navigator.clipboard.writeText)
-        navigator.clipboard.writeText(url).then(done, ()=>window.prompt('Copy this link:', url));
-      else window.prompt('Copy this link:', url);
-    } catch(e){ window.prompt('Copy this link:', url); }
+        navigator.clipboard.writeText(text).then(done, ()=>window.prompt('Copy this:', text));
+      else window.prompt('Copy this:', text);
+    } catch(e){ window.prompt('Copy this:', text); }
   };
+  el('copylink').onclick  = ()=>copyText(inviteLink(), el('copylink'));
+  el('copylink2').onclick = ()=>copyText(inviteLink(), el('copylink2'));
+  el('copycode').onclick  = ()=>copyText(party, el('copycode'));
+  const showErr = t=>{ const e = el('perr'); e.textContent = t; if(t) e.classList.remove('hidden'); else e.classList.add('hidden'); };
+  const joinTyped = ()=>{
+    const code = cleanCode(el('proom').value);
+    if(code.length < 3){ showErr('A party code is at least 3 letters or numbers.'); return; }
+    showErr('');
+    el('proom').value = '';
+    if(code === party) return;
+    setParty(code);
+    ensureConnected();
+  };
+  el('joinparty').onclick = joinTyped;
+  el('proom').oninput = ()=>showErr('');
+  el('proom').onkeydown = e=>{ if(e.key === 'Enter') joinTyped(); };
+  el('newparty').onclick = ()=>{ setParty(newCode()); ensureConnected(); };
   el('play').onclick = ()=>{
     const nm = (el('pname').value || '').trim();
-    const rm = (el('proom').value || '').trim();
     if(nm) localStorage_safe('verge.name', nm);
-    if(rm) localStorage_safe('verge.room', rm);
     ensureConnected();
     startMatch();
   };
   // remember what you typed last time, then join the lobby right away
   el('pname').value = localStorage_safe('verge.name') || '';
-  // a link with ?room=... drops you straight into that lobby
-  let urlRoom = '';
-  try { urlRoom = new URLSearchParams(location.search || '').get('room') || ''; } catch(e){}
-  el('proom').value = urlRoom || localStorage_safe('verge.room') || '';
-  renderLobby();
+  // an invite link (?party=CODE, or the older ?room=) drops you straight into
+  // that party; otherwise you get back the party you had, or a brand new one
+  let linkCode = '';
+  try {
+    const q = new URLSearchParams(location.search || '');
+    linkCode = q.get('party') || q.get('room') || '';
+  } catch(e){}
+  setParty(linkCode || localStorage_safe('verge.party') || newCode());
   ensureConnected();
   el('resume').onclick = requestLock;
   el('quit').onclick = leaveMatch;
