@@ -616,8 +616,8 @@ scene.add(muzzleLight);
 // the gun renders in its own pass at a fixed field of view, so zooming never inflates it
 const vmScene = new THREE.Scene();
 const vmCam = new THREE.PerspectiveCamera(56, 1, 0.08, 12);
-vmScene.add(new THREE.HemisphereLight(0xe6f0fa, 0x3e444c, 0.82));
-const vmKey = new THREE.DirectionalLight(0xfff4e2, 1.18); vmKey.position.set(0.45,0.9,0.55);
+vmScene.add(new THREE.HemisphereLight(0xe6f0fa, 0x2e3238, 0.58));
+const vmKey = new THREE.DirectionalLight(0xfff4e2, 1.38); vmKey.position.set(0.45,0.9,0.55);
 const vmRim = new THREE.DirectionalLight(0x8fb4dc, 0.60); vmRim.position.set(-0.7,0.15,-0.6);
 vmScene.add(vmKey, vmRim);
 
@@ -1989,7 +1989,15 @@ function knifeEnvMap(){
     const gr = g.createLinearGradient(0,0,0,64);
     gr.addColorStop(0, top); gr.addColorStop(0.48, mid); gr.addColorStop(1, bot);
     g.fillStyle = gr; g.fillRect(0,0,64,64);
-    if(band){ g.fillStyle = 'rgba(255,255,255,0.85)'; g.fillRect(0, 26, 64, 5); }
+    if(band){
+      // two soft light strips, the kind of highlights that slide along polished steel
+      [[22, 5, 0.95], [40, 3, 0.55]].forEach(([y, h, a])=>{
+        const b = g.createLinearGradient(0, y-h, 0, y+h);
+        b.addColorStop(0, 'rgba(255,255,255,0)'); b.addColorStop(0.5, 'rgba(255,255,255,'+a+')'); b.addColorStop(1, 'rgba(255,255,255,0)');
+        g.fillStyle = b; g.fillRect(0, y-h, 64, h*2);
+      });
+      g.fillStyle = 'rgba(20,24,30,0.55)'; g.fillRect(28, 0, 6, 64);                  // a dark stanchion breaks it up
+    }
     return c;
   };
   const side = face('#dfe7ee', '#8d96a0', '#2a2e33', true);
@@ -2217,79 +2225,92 @@ function blk(out, f, u, w, h, d, mat, rx){
 function makeGripHand(o){
   const M = knifeMaterials();
   const h = new THREE.Group();
-  const R = o.R, t = o.tube || 0.0088, n = 4, sp = o.spacing || 0.0195, z0 = o.z0 || 0;
+  const R = o.R, t = o.tube || 0.0088, sp = o.spacing || 0.0195, z0 = o.z0 || 0;
   const sign = o.sweep >= 0 ? 1 : -1, arc = Math.abs(o.sweep);
-  const sx = o.sx || 1, sy = o.sy || 1;                 // stretch the wrap to fit a flat grip
-  for(let i=0;i<n;i++){
-    const r = R * (i === 3 ? 0.93 : 1), a = arc * (i === 3 ? 0.9 : 1);
-    const g = new THREE.TorusBufferGeometry(r, t * (i === 3 ? 0.88 : 1), 8, 18, a);
-    const f = new THREE.Mesh(g, M.glove);
-    f.rotation.z = sign > 0 ? o.palm : o.palm - a;
-    f.scale.set(sx, sy, 1);
-    f.position.z = z0 + i*sp;
-    h.add(f);
-    // fingertip
-    const end = sign > 0 ? o.palm + a : o.palm - a;
-    const tip = new THREE.Mesh(new THREE.SphereBufferGeometry(t*1.02, 10, 8), M.glove);
-    tip.position.set(Math.cos(end)*r*sx, Math.sin(end)*r*sy, z0 + i*sp);
-    h.add(tip);
+  const sx = o.sx || 1, sy = o.sy || 1;
+  const Y = new V3(0,1,0), tmp = new V3();
+  const ball = (p, r, mat)=>{ const m = new THREE.Mesh(new THREE.SphereBufferGeometry(r, 12, 9), mat); m.position.copy(p); h.add(m); return m; };
+  // a capsule between two points: the shape every finger bone is made of
+  const bone = (a, b, r0, r1, mat)=>{
+    const L = a.distanceTo(b);
+    const g = new THREE.CylinderBufferGeometry(r1, r0, L, 12, 1, true);
+    const m = new THREE.Mesh(g, mat);
+    m.position.copy(a).add(b).multiplyScalar(0.5);
+    m.quaternion.setFromUnitVectors(Y, tmp.copy(b).sub(a).normalize());
+    h.add(m); ball(b, r1, mat); return m;
+  };
+  const around = (ang, rad, z)=>new V3(Math.cos(ang)*rad*sx, Math.sin(ang)*rad*sy, z);
+  // four fingers: knuckle, three bones each curling round the grip; index to little finger
+  const LEN = [1.0, 1.06, 0.98, 0.84], THK = [1.0, 1.04, 0.98, 0.86];
+  for(let i=0;i<4;i++){
+    const z = z0 + i*sp, a = arc * LEN[i], r = R + t*0.95, th = t * THK[i];
+    const k = [0, 0.34, 0.68, 1.0].map(f => o.palm + sign*a*f);
+    const p0 = around(k[0], r*1.16, z), p1 = around(k[1], r, z), p2 = around(k[2], r, z), p3 = around(k[3], r*0.97, z);
+    ball(p0, th*1.12, M.glove);
+    bone(p0, p1, th*1.10, th*1.02, M.glove);
+    bone(p1, p2, th*1.00, th*0.93, M.glove);
+    bone(p2, p3, th*0.92, th*0.84, M.glove);
+    // armoured knuckle plate over each knuckle, like a tactical glove
+    const plate = new THREE.Mesh(new THREE.BoxBufferGeometry(th*1.9, th*1.5, sp*0.82), M.gloveDark);
+    plate.position.copy(around(k[0], r*1.16 + th*0.95, z));
+    plate.rotation.z = k[0];
+    h.add(plate);
   }
-  // palm and the back of the hand
-  const pc = Math.cos(o.palm), ps = Math.sin(o.palm);
-  const palm = new THREE.Mesh(new THREE.SphereBufferGeometry(1, 18, 12), M.glove);
-  palm.scale.set(0.020 + Math.abs(ps)*0.014, 0.020 + Math.abs(pc)*0.014, sp*2.6);
-  palm.position.set(pc*(R*sx + 0.010), ps*(R*sy + 0.010), z0 + sp*1.6);
-  h.add(palm);
-  const knuck = new THREE.Mesh(new THREE.SphereBufferGeometry(1, 14, 10), M.gloveDark);
-  knuck.scale.set(0.012 + Math.abs(ps)*0.008, 0.012 + Math.abs(pc)*0.008, sp*2.2);
-  knuck.position.set(pc*(R*sx + 0.021), ps*(R*sy + 0.021), z0 + sp*1.5);
-  h.add(knuck);
-  // thumb: a short capsule laid along the object
+  // the hand itself: palm against the grip, back of the hand running to the wrist
+  const pa = o.palm, zc = z0 + sp*1.5;
+  const backN = new V3(Math.cos(pa)*sx, Math.sin(pa)*sy, 0).normalize();
+  const hand = new THREE.Mesh(new THREE.SphereBufferGeometry(1, 20, 14), M.glove);
+  hand.scale.set(0.022 + Math.abs(Math.sin(pa))*0.012, 0.022 + Math.abs(Math.cos(pa))*0.012, sp*2.55);
+  hand.position.copy(around(pa, R + t*2.25, zc + sp*0.25));
+  h.add(hand);
+  const pad = new THREE.Mesh(new THREE.SphereBufferGeometry(1, 16, 10), M.gloveDark);   // padded back panel
+  pad.scale.set(0.012 + Math.abs(Math.sin(pa))*0.008, 0.012 + Math.abs(Math.cos(pa))*0.008, sp*1.7);
+  pad.position.copy(around(pa, R + t*3.3, zc + sp*0.6));
+  h.add(pad);
+  // thumb: two bones laid over the grip towards the front
   if(o.thumb){
-    const T = o.thumb, ta = T.a, len = T.len || 0.045;
-    const tg = new THREE.CylinderBufferGeometry(0.0085, 0.0098, len, 12);
-    tg.rotateX(Math.PI/2);
-    const th = new THREE.Mesh(tg, M.glove);
-    th.position.set(Math.cos(ta)*(R*sx + 0.004), Math.sin(ta)*(R*sy + 0.004), z0 + (T.dir > 0 ? len/2 : -len/2) + (T.off||0));
-    h.add(th);
-    const tt = new THREE.Mesh(new THREE.SphereBufferGeometry(0.0088, 10, 8), M.glove);
-    tt.position.set(th.position.x, th.position.y, th.position.z + (T.dir > 0 ? len/2 : -len/2));
-    h.add(tt);
+    const T = o.thumb, len = T.len || 0.045, dz = T.dir > 0 ? 1 : -1;
+    const base = around(pa + sign*0.35, R + t*1.9, z0 + (T.off||0) + dz*0.004);
+    const mid  = around(T.a*0.6 + (pa + sign*0.35)*0.4, R + t*1.25, base.z + dz*len*0.55);
+    const tip  = around(T.a, R + t*0.95, base.z + dz*len);
+    ball(base, t*1.25, M.glove);
+    bone(base, mid, t*1.22, t*1.08, M.glove);
+    bone(mid, tip, t*1.05, t*0.95, M.glove);
   }
-  // wrist, cuff and sleeve leave the palm along `arm`
+  // wrist, cuff with a strap, sleeve
   if(o.arm){
     const d = new V3(o.arm[0], o.arm[1], o.arm[2]).normalize();
     const wz = o.wristZ === undefined ? z0 + sp*3.6 : o.wristZ;
-    const wa = o.wristA === undefined ? o.palm : o.wristA;
-    const base = new V3(Math.cos(wa)*(R*sx + 0.008), Math.sin(wa)*(R*sy + 0.008), wz);
+    const wa = o.wristA === undefined ? pa : o.wristA;
+    const base = around(wa, R + t*1.4, wz);
     const seg = (r0, r1, len, from, mat)=>{
-      const g = new THREE.CylinderBufferGeometry(r1, r0, len, 16);
+      const g = new THREE.CylinderBufferGeometry(r1, r0, len, 18);
       g.translate(0, len/2, 0);
       const m = new THREE.Mesh(g, mat);
       m.position.copy(from);
-      m.quaternion.setFromUnitVectors(new V3(0,1,0), d);
+      m.quaternion.setFromUnitVectors(Y, d);
       h.add(m); return m;
     };
-    seg(0.028, 0.026, 0.05, base, M.glove);
-    const c0 = base.clone().addScaledVector(d, 0.045);
-    seg(0.034, 0.033, 0.03, c0, M.gloveDark);
-    const s0 = base.clone().addScaledVector(d, 0.07);
-    seg(0.046, 0.052, 0.30, s0, M.sleeve);
+    seg(0.027, 0.025, 0.05, base, M.glove);
+    seg(0.032, 0.032, 0.022, base.clone().addScaledVector(d, 0.040), M.gloveDark);   // cuff
+    seg(0.0335, 0.0335, 0.008, base.clone().addScaledVector(d, 0.047), M.pin);      // buckle strap
+    seg(0.046, 0.052, 0.30, base.clone().addScaledVector(d, 0.064), M.sleeve);
+    seg(0.050, 0.050, 0.02, base.clone().addScaledVector(d, 0.064), M.gloveDark);   // sleeve hem
   }
   return h;
 }
 
 // idle pose of the knife in the hand; the animations are offsets from this
-const KNIFE_BASE = {px:0.030, py:0.030, pz:-0.060, rx:0.38, ry:0.75, rz:-1.20};
+const KNIFE_BASE = {px:0.000, py:0.050, pz:-0.030, rx:0.45, ry:0.55, rz:-1.15};
 function buildKnife(){
   const g = new THREE.Group();
   const root = new THREE.Group();                  // the hand and everything it holds
   const K = makeButterfly();
-  K.pin.scale.setScalar(1.25);
+  K.pin.scale.setScalar(1.40);
   // right hand closed round the safe handle: palm on the right, fingers curling
   // under and up the far side, thumb along the spine towards the pivot
-  const hand = makeGripHand({R:0.021, tube:0.0086, spacing:0.0185, z0:0.058, palm:-0.25, sweep:-3.6,
-                             sx:0.95, sy:1.25, thumb:{a:2.2, len:0.040, dir:-1, off:0.006}, arm:[0.30,-0.42,1]});
+  const hand = makeGripHand({R:0.022, tube:0.0090, spacing:0.0192, z0:0.070, palm:-0.25, sweep:-3.5,
+                             sx:0.95, sy:1.28, thumb:{a:2.3, len:0.044, dir:-1, off:0.004}, arm:[0.30,-0.42,1]});
   hand.position.z = 0;
   root.add(K.pin, hand);
   root.position.set(KNIFE_BASE.px, KNIFE_BASE.py, KNIFE_BASE.pz);
@@ -2301,7 +2322,7 @@ function buildKnife(){
   const dummy = new THREE.Mesh(new THREE.PlaneBufferGeometry(0.01,0.01), matFlash.clone());
   flash.add(dummy); g.add(flash);
   g.userData = {flash:flash, cone:dummy, star:dummy, bolt:bolt, boltZ:0, kind:'knife', lens:null, reticle:null,
-                knife:root, blade:K.blade, bite:K.bite, safe:K.safe, base:KNIFE_BASE};
+                knife:root, blade:K.blade, bite:K.bite, safe:K.safe, pin:K.pin, base:KNIFE_BASE};
   return g;
 }
 
@@ -4048,7 +4069,7 @@ function animateKnife(u, dt){
   vm.stabT    = Math.max(0, vm.stabT    - dt/KNIFE_STAB);
   vm.inspectT = Math.max(0, vm.inspectT - dt/KNIFE_INSPECT);
   let px = B.px, py = B.py, pz = B.pz, rx = B.rx, ry = B.ry, rz = B.rz;
-  let blade = 0, bite = 0;
+  let blade = 0, bite = 0, tossY = 0, tossRoll = 0;
   const PI = Math.PI;
 
   if(vm.drawT > 0){
@@ -4088,13 +4109,14 @@ function animateKnife(u, dt){
       rx += Math.sin(cf * PI) * 0.22 * lift;
       py += Math.sin(cf * PI) * 0.014;
     }
-    // an aerial to finish: the whole knife rolls once about its length, up and back
+    // an aerial to finish: the hand flicks the knife up, it rolls once in the air
+    // about its length and drops back into the grip
     const aer = seg(t, 0.72, 0.92);
     if(aer > 0 && aer < 1){
-      const e = easeIO(aer);
-      py += Math.sin(aer * PI) * 0.05;
-      rz -= e * PI * 2;
-      bite = -Math.sin(aer * PI) * PI * 0.6;
+      const e = easeIO(aer), air = Math.sin(aer * PI);
+      tossY = air * 0.055; tossRoll = -e * PI * 2;
+      py += air * 0.012;
+      bite = -air * PI * 0.5;
     }
   }
 
@@ -4132,6 +4154,7 @@ function animateKnife(u, dt){
   K.rotation.set(rx, ry, rz);
   u.blade.rotation.x = blade;
   u.bite.rotation.x = bite;
+  if(u.pin){ u.pin.position.set(0, tossY, 0); u.pin.rotation.set(0, 0, tossRoll); }
 }
 
 /* ============================================================
