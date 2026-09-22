@@ -259,6 +259,11 @@
   #soundtoast.show{opacity:1;transform:translate(-50%,0)}
   #soundtoast.off{box-shadow:inset 0 0 0 1px rgba(226,59,87,.7)}
   #soundtoast small{font-weight:400;color:var(--mute);font-size:.78rem}
+  #partytoast{position:fixed;left:50%;bottom:6.5rem;transform:translate(-50%,8px);z-index:30;pointer-events:none;
+    padding:.6rem 1rem;border-radius:4px;background:rgba(16,21,26,.88);box-shadow:inset 0 0 0 1px rgba(47,166,160,.6);
+    color:var(--paper);font-size:.92rem;opacity:0;transition:opacity .2s ease,transform .2s ease}
+  #partytoast.show{opacity:1;transform:translate(-50%,0)}
+  #partytoast b{color:var(--good)}
   #dead{position:absolute;left:50%;top:44%;transform:translate(-50%,-50%);text-align:center}
   #dead .t{font-size:1.5rem;font-weight:700}
   #dead .s{color:rgba(242,240,234,.7);font-size:.9rem;margin-top:.3rem}
@@ -292,6 +297,7 @@
 <body>
 <canvas id="c"></canvas>
 
+<div id="partytoast"></div>
 <!-- opening flyover and error box sit above everything, outside the HUD -->
   <div id="intro" class="hidden">
     <div class="ibar" id="ibar1"></div>
@@ -412,6 +418,9 @@
         <div class="choices" id="qualPick"></div>
         <div class="fieldname">Aim control</div>
         <div class="choices" id="aimPick"></div>
+        <div class="fieldname">Fullscreen while playing</div>
+        <div class="choices" id="fsPick"></div>
+        <div class="note" style="display:block;margin:-.75rem 0 1.15rem">In fullscreen, Ctrl+W can't close the game by accident.</div>
         <div class="keys">
           <b>WASD</b><span>Move — strafe in the air to build speed</span>
           <b>Shift</b><span>Slide while moving, or steady the scope</span>
@@ -486,7 +495,7 @@ const pick = a=>a[(Math.random()*a.length)|0];
    settings
    ============================================================ */
 const S = {
-  map:0, mode:0, cls:0, tod:0, bots:6, diff:1, sens:1.00, fov:88, volume:0.7, quality:1, fpsShown:true, aimToggle:0
+  map:0, mode:0, cls:0, tod:0, bots:6, diff:1, sens:1.00, fov:88, volume:0.7, quality:1, fpsShown:true, aimToggle:0, fullscreen:1
 };
 const MODES = [
   {key:'ffa',   label:'FFA',       name:'Free-for-all', bots:9,    target:15, time:360, knock:0, arena:false, classes:[0,1,2,3],
@@ -2006,153 +2015,234 @@ function knifeEnvMap(){
   knifeEnv.needsUpdate = true;
   return knifeEnv;
 }
-function extrudeProfile(shape, depth, bevel){
+// The blade is built as real ground steel rather than a flat plate: a full-
+// thickness flat, a primary grind that tapers from the grind line down to a
+// razor edge, and a swedge (false edge) that thins the clip towards the point.
+// Every surface is a strip of quads between two curves, so the light slides
+// across the grind the way it does on a real knife.
+//
+// Profile coordinates: x runs forward from the pivot, y is up. Model space is
+// x -> forward (-z), y -> up, thickness -> x.
+const BLADE = (function(){
+  const N = 36, tip = [0.172, 0.0035];
+  const q = (a, c, b, t)=>[ (1-t)*(1-t)*a[0] + 2*t*(1-t)*c[0] + t*t*b[0],
+                            (1-t)*(1-t)*a[1] + 2*t*(1-t)*c[1] + t*t*b[1] ];
+  // cutting edge: straight from the plunge, then the belly sweeps up into the point
+  const E = [], NS = 12;
+  for(let i=0;i<=NS;i++){ const t=i/NS; E.push([0.026 + (0.106-0.026)*t, -0.0150 + 0.0004*t]); }
+  for(let i=1;i<=N-NS;i++) E.push(q([0.106,-0.0146], [0.160,-0.0140], tip, i/(N-NS)));
+  // grind line: runs from the top of the plunge straight into the point
+  const g0 = [0.031, -0.0012], G = E.map((p,i)=>{
+    if(i === 0) return g0.slice();
+    const x = p[0], y = g0[1] + (x - g0[0]) * (tip[1] - g0[1]) / (tip[0] - g0[0]);
+    return [x, Math.max(y, p[1])];
+  });
+  G[N] = tip.slice();
+  // clip: the spine dips gently down to the point; the swedge sits just under it
+  const C = [], W = [];
+  for(let i=0;i<=24;i++){
+    const t = i/24, c = q([0.098, 0.0138], [0.142, 0.0074], tip, t);
+    const off = 0.0046 * Math.sqrt(t) * Math.pow(1-t, 1.2) * 2.2;
+    C.push(c); W.push([c[0], c[1] - off]);
+  }
+  return {E, G, C, W, tip, T:0.0044};
+})();
+function bladeFlatShape(){
+  const B = BLADE, s = new THREE.Shape();
+  s.moveTo(B.G[0][0], B.G[0][1]);
+  for(let i=1;i<B.G.length;i++) s.lineTo(B.G[i][0], B.G[i][1]);
+  for(let i=B.W.length-2;i>=0;i--) s.lineTo(B.W[i][0], B.W[i][1]);
+  s.lineTo(0.016, 0.0138);                                           // spine
+  s.quadraticCurveTo(0.006, 0.0140, 0.0, 0.0128);                    // into the tang
+  s.absarc(0, 0, 0.0128, Math.PI/2, Math.PI*1.36, false);            // round the pivot
+  s.lineTo(0.004, -0.0166);                                          // kicker
+  s.quadraticCurveTo(0.010, -0.0170, 0.015, -0.0152);
+  s.quadraticCurveTo(0.020, -0.0116, 0.025, -0.0150);                // sharpening choil
+  s.lineTo(B.E[0][0], B.E[0][1]);
+  s.quadraticCurveTo(0.0268, -0.0060, B.G[0][0], B.G[0][1]);         // plunge line
+  const pin = new THREE.Path(); pin.absarc(0, 0, 0.0026, 0, Math.PI*2, true); s.holes.push(pin);
+  return s;
+}
+// a tapered strip between curve A (thin, the edge) and curve B (thick), both faces
+function taperStrip(A, B, hA, hB){
+  const n = A.length, pos = [], uv = [], idx = [];
+  [1, -1].forEach(sg=>{
+    const o = pos.length/3;
+    for(let i=0;i<n;i++){
+      pos.push(sg*hA, A[i][1], -A[i][0]); uv.push(A[i][0], A[i][1]);
+      pos.push(sg*hB, B[i][1], -B[i][0]); uv.push(B[i][0], B[i][1]);
+    }
+    for(let i=0;i<n-1;i++){
+      const a = o+i*2, b = a+1, c = a+2, d = a+3;
+      if(sg > 0) idx.push(a,c,b, b,c,d); else idx.push(a,b,c, b,d,c);
+    }
+  });
+  // the edge itself, a hair of flat between the two faces
+  const o = pos.length/3;
+  for(let i=0;i<n;i++){ pos.push(hA, A[i][1], -A[i][0], -hA, A[i][1], -A[i][0]); uv.push(A[i][0],A[i][1], A[i][0],A[i][1]); }
+  for(let i=0;i<n-1;i++){ const a=o+i*2; idx.push(a,a+1,a+2, a+1,a+3,a+2); }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(pos), 3));
+  g.setAttribute('uv', new THREE.BufferAttribute(new Float32Array(uv), 2));
+  g.setIndex(idx);
+  g.computeVertexNormals();
+  return g;
+}
+// Channel handle: slight hourglass so it reads as shaped, a rounded head round
+// the pivot, three tapering windows and a lanyard hole.
+function handleShape(){
+  const s = new THREE.Shape(), L = 0.126;
+  s.moveTo(0, 0.0132);
+  s.quadraticCurveTo(-0.058, 0.0112, -L+0.010, 0.0128);
+  s.quadraticCurveTo(-L, 0.0130, -L, 0.0112);
+  s.lineTo(-L, -0.0112);
+  s.quadraticCurveTo(-L, -0.0130, -L+0.010, -0.0128);
+  s.quadraticCurveTo(-0.058, -0.0112, 0, -0.0132);
+  s.absarc(0, 0, 0.0132, -Math.PI/2, Math.PI/2, false);
+  const slot = (x0, x1, h0, h1)=>{
+    const p = new THREE.Path();
+    p.moveTo(x0, h0); p.lineTo(x1, h1);
+    p.absarc(x1, 0, h1, Math.PI/2, -Math.PI/2, true);
+    p.lineTo(x0, -h0);
+    p.absarc(x0, 0, h0, -Math.PI/2, Math.PI/2, true);
+    s.holes.push(p);
+  };
+  slot(-0.021, -0.043, 0.0046, 0.0041);
+  slot(-0.050, -0.071, 0.0040, 0.0036);
+  slot(-0.078, -0.096, 0.0035, 0.0031);
+  const lan = new THREE.Path(); lan.absarc(-0.1175, 0, 0.0026, 0, Math.PI*2, true); s.holes.push(lan);
+  const pin = new THREE.Path(); pin.absarc(0, 0, 0.0026, 0, Math.PI*2, true); s.holes.push(pin);
+  return s;
+}
+// Studio lighting baked into a prefiltered environment: a big softbox above, two
+// strip lights either side, a warm panel in front and a darker floor. Metal is
+// nothing but reflections, so this is what makes the steel look like steel.
+let knifePMREM = null;
+function knifeStudioEnv(){
+  if(knifePMREM !== null) return knifePMREM || null;
+  knifePMREM = false;
+  try {
+    if(!THREE.PMREMGenerator || !renderer.getContext) return null;
+    const sc = new THREE.Scene();
+    const room = new THREE.SphereBufferGeometry(20, 24, 16);
+    const col = [], p = room.attributes.position;
+    for(let i=0;i<p.count;i++){
+      const y = p.getY(i)/20, c = y > 0 ? 0.44 + 0.34*y : 0.42 + 0.30*y;   // light above, dark below
+      col.push(c*0.94, c*0.98, c*1.04);
+    }
+    room.setAttribute('color', new THREE.BufferAttribute(new Float32Array(col), 3));
+    sc.add(new THREE.Mesh(room, new THREE.MeshBasicMaterial({vertexColors:true, side:THREE.BackSide})));
+    const panel = (w, h, x, y, z, c, k)=>{
+      const m = new THREE.Mesh(new THREE.PlaneBufferGeometry(w, h),
+                               new THREE.MeshBasicMaterial({color:new THREE.Color(c).multiplyScalar(k), side:THREE.DoubleSide}));
+      m.position.set(x, y, z); m.lookAt(0, 0, 0); sc.add(m);
+    };
+    panel(14, 6, 0, 12, 0, 0xffffff, 3.2);           // softbox overhead
+    panel(1.4, 14, 11, 3, -4, 0xeaf2ff, 3.6);         // strip, right
+    panel(1.0, 14, -11, 3, 3, 0xeaf2ff, 2.6);         // strip, left
+    panel(9, 4, 2, 2, 12, 0xffe6c8, 1.7);             // warm fill in front
+    panel(9, 3, -3, 1, -12, 0x9fc4ff, 1.1);           // cool bounce behind
+    const pm = new THREE.PMREMGenerator(renderer);
+    knifePMREM = pm.fromScene(sc, 0.02).texture;
+    pm.dispose();
+  } catch(e){ knifePMREM = false; }
+  return knifePMREM || null;
+}
+// fine lengthwise brushing, used as a roughness map so highlights streak along the blade
+function brushedTexture(){
+  const c = document.createElement('canvas'); c.width = 256; c.height = 256;
+  const g = c.getContext('2d');
+  if(!g || !g.fillRect) return null;
+  g.fillStyle = 'rgb(214,214,214)'; g.fillRect(0, 0, 256, 256);
+  for(let i=0;i<900;i++){
+    const y = Math.random()*256, v = 165 + Math.random()*90 | 0, len = 40 + Math.random()*220;
+    g.fillStyle = 'rgba('+v+','+v+','+v+',0.35)';
+    g.fillRect(Math.random()*256, y, len, 0.6 + Math.random()*0.8);
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(7, 7);
+  return t;
+}
+const knifeMats = {};
+function knifeMaterials(){
+  if(knifeMats.steel) return knifeMats;
+  const env = knifeStudioEnv();
+  if(env && THREE.MeshStandardMaterial){
+    const brush = brushedTexture();
+    const S = (o)=> new THREE.MeshStandardMaterial(Object.assign({envMap:env, envMapIntensity:1.0}, o));
+    knifeMats.steel  = S({color:0xcdd3d9, metalness:1.0, roughness:0.40, roughnessMap:brush});          // satin flats
+    knifeMats.edge   = S({color:0xe4e8ec, metalness:1.0, roughness:0.13, side:THREE.DoubleSide});      // polished grind
+    knifeMats.handle = S({color:0x444b55, metalness:0.80, roughness:0.46, roughnessMap:brush});         // anodised titanium
+    knifeMats.spacer = S({color:0x131518, metalness:0.4, roughness:0.55});
+    knifeMats.pin    = S({color:0xd2d7dc, metalness:1.0, roughness:0.20});
+    knifeMats.socket = S({color:0x0b0c0e, metalness:0.3, roughness:0.7});
+    knifeMats.accent = S({color:0xc8354c, metalness:0.6, roughness:0.35});
+  } else {
+    const cube = knifeEnvMap();
+    const P = (c, sp, sh, refl)=> new THREE.MeshPhongMaterial({color:c, specular:sp, shininess:sh,
+                                    envMap:refl ? cube : null, reflectivity:refl||0, combine:THREE.MixOperation});
+    knifeMats.steel = P(0xaeb6be, 0xdfe6ec, 60, 0.34);
+    knifeMats.edge = P(0xe9eef2, 0xffffff, 160, 0.72); knifeMats.edge.side = THREE.DoubleSide;
+    knifeMats.handle = P(0x3b4048, 0xa9b2bc, 80, 0.18);
+    knifeMats.spacer = P(0x15171a, 0x3a3f45, 30, 0);
+    knifeMats.pin = P(0xb8bec5, 0xffffff, 120, 0.5);
+    knifeMats.socket = P(0x0b0c0e, 0x222222, 10, 0);
+    knifeMats.accent = P(0xc8354c, 0x662222, 40, 0);
+  }
+  knifeMats.glove = new THREE.MeshPhongMaterial({color:0x24282e, specular:0x30353b, shininess:14});
+  knifeMats.gloveDark = new THREE.MeshPhongMaterial({color:0x16181c, specular:0x22262b, shininess:10});
+  knifeMats.sleeve = new THREE.MeshPhongMaterial({color:0x171a1f, specular:0x15181b, shininess:4});
+  return knifeMats;
+}
+function extrudeProfile(shape, depth, bevel, segs){
   const g = new THREE.ExtrudeBufferGeometry(shape, {depth:depth, bevelEnabled:!!bevel, bevelThickness:bevel||0,
-                                                    bevelSize:(bevel||0)*0.8, bevelSegments:2, curveSegments:10});
+                                                    bevelSize:(bevel||0)*0.8, bevelSegments:segs||2, curveSegments:segs ? 24 : 10});
   // shape x -> forward (-z), shape y -> up, extrusion -> thickness along x
   g.rotateY(Math.PI/2);
   g.translate(-depth/2, 0, 0);
   g.computeVertexNormals();
   return g;
 }
-// Blade in two pieces that meet at the grind line: the flat above it at full
-// thickness, the edge bevel below it thinner and polished. The step between them
-// is what makes a blade read as ground steel.
-function bladeBodyShape(){
-  const s = new THREE.Shape();
-  s.moveTo(0.004, -0.0072);
-  s.quadraticCurveTo(0.010, -0.0132, 0.020, -0.0130);          // choil
-  s.lineTo(0.024, -0.0046);                                     // up to where the grind starts
-  s.lineTo(0.176, 0.0005);                                      // grind line, running to the point
-  s.lineTo(0.192, 0.0012);                                      // point
-  s.lineTo(0.158, 0.0094);                                      // clip back along the swedge
-  s.lineTo(0.032, 0.0116);                                      // spine
-  s.quadraticCurveTo(0.012, 0.0122, 0.006, 0.0076);             // kicker
-  s.quadraticCurveTo(-0.0048, 0.0000, 0.004, -0.0072);          // round the tang
-  const pin = new THREE.Path(); pin.absarc(0.0, 0.0, 0.0022, 0, Math.PI*2, true);
-  s.holes.push(pin);
-  return s;
-}
-function bladeEdgeShape(){
-  const s = new THREE.Shape();
-  s.moveTo(0.020, -0.0130);
-  s.lineTo(0.136, -0.0122);                                     // straight edge
-  s.quadraticCurveTo(0.170, -0.0096, 0.192, 0.0012);            // belly sweeping up to the point
-  s.lineTo(0.176, 0.0005);
-  s.lineTo(0.024, -0.0046);
-  s.lineTo(0.020, -0.0130);
-  return s;
-}
-function handleShape(){
-  // skeletonised handle running back from the pivot (negative x): a row of
-  // round cut-outs that shrink towards the butt, and a slot at the end
-  const L = 0.132, H = 0.0128, r = 0.0060;
-  const s = new THREE.Shape();
-  s.moveTo(0.006, -H);
-  s.lineTo(-L + r, -H);
-  s.quadraticCurveTo(-L, -H, -L, -H + r);
-  s.lineTo(-L, H - r);
-  s.quadraticCurveTo(-L, H, -L + r, H);
-  s.lineTo(0.006, H);
-  s.absarc(0.006, 0, H, Math.PI/2, -Math.PI/2, true);          // rounded head round the pivot
-  [[-0.029,0.0064],[-0.050,0.0058],[-0.069,0.0053],[-0.087,0.0048]].forEach(([x,rr])=>{
-    const h = new THREE.Path(); h.absarc(x, 0, rr, 0, Math.PI*2, true); s.holes.push(h);
-  });
-  const slot = new THREE.Path(), sx0 = -0.100, sx1 = -0.117, sh = 0.0042;
-  slot.moveTo(sx0, -sh); slot.lineTo(sx1, -sh);
-  slot.absarc(sx1, 0, sh, -Math.PI/2, Math.PI/2, true);
-  slot.lineTo(sx0, sh);
-  slot.absarc(sx0, 0, sh, Math.PI/2, -Math.PI/2, true);
-  s.holes.push(slot);
-  const pin = new THREE.Path(); pin.absarc(0.006, 0, 0.0024, 0, Math.PI*2, true);
-  s.holes.push(pin);
-  return s;
-}
-const knifeMats = {};
-function knifeMaterials(){
-  if(knifeMats.steel) return knifeMats;
-  const env = knifeEnvMap();
-  knifeMats.steel = new THREE.MeshPhongMaterial({color:0xaeb6be, specular:0xdfe6ec, shininess:60,
-                                                 envMap:env, reflectivity:0.34, combine:THREE.MixOperation});   // satin flat
-  knifeMats.edge = new THREE.MeshPhongMaterial({color:0xe9eef2, specular:0xffffff, shininess:160,
-                                                envMap:env, reflectivity:0.72, combine:THREE.MixOperation});    // mirror edge
-  knifeMats.handle = new THREE.MeshPhongMaterial({color:0x3b4048, specular:0xa9b2bc, shininess:80,
-                                                  envMap:env, reflectivity:0.18, combine:THREE.MixOperation});  // titanium
-  knifeMats.spacer = new THREE.MeshPhongMaterial({color:0x15171a, specular:0x3a3f45, shininess:30});
-  knifeMats.pin = new THREE.MeshPhongMaterial({color:0xb8bec5, specular:0xffffff, shininess:120,
-                                               envMap:env, reflectivity:0.5, combine:THREE.MixOperation});
-  knifeMats.accent = new THREE.MeshPhongMaterial({color:0xc8354c, specular:0x662222, shininess:40});
-  knifeMats.glove = new THREE.MeshPhongMaterial({color:0x24282e, specular:0x30353b, shininess:14});
-  knifeMats.gloveDark = new THREE.MeshPhongMaterial({color:0x16181c, specular:0x22262b, shininess:10});
-  knifeMats.sleeve = new THREE.MeshPhongMaterial({color:0x171a1f, specular:0x15181b, shininess:4});
-  return knifeMats;
-}
 // the knife on its own: used in your hand and, scaled, on other players
 function makeButterfly(){
-  const M = knifeMaterials();
-  const BT = 0.0036, HT = 0.0040;                     // blade and handle thickness
+  const M = knifeMaterials(), B = BLADE;
+  const BT = B.T, HT = 0.0036, h = BT/2;
   const pin = new THREE.Group();
   const blade = new THREE.Group();
-  blade.add(new THREE.Mesh(extrudeProfile(bladeBodyShape(), BT, 0.0009), M.steel));
-  blade.add(new THREE.Mesh(extrudeProfile(bladeEdgeShape(), BT*0.40, 0.0007), M.edge));
-  // tang pins either side of the pivot
-  const tp = new THREE.CylinderBufferGeometry(0.0014, 0.0014, BT + 0.004, 10); tp.rotateZ(Math.PI/2);
-  [[0.008, 0.0068],[0.008, -0.0060]].forEach(([f,u])=>{ const m = new THREE.Mesh(tp, M.pin); m.position.set(0, u, -f); blade.add(m); });
+  blade.add(new THREE.Mesh(extrudeProfile(bladeFlatShape(), BT, 0, 0), M.steel));
+  blade.add(new THREE.Mesh(taperStrip(B.E, B.G, 0.00022, h), M.edge));      // primary grind
+  blade.add(new THREE.Mesh(taperStrip(B.C, B.W, 0.00050, h), M.edge));      // swedge
+  // tang pins, the stops the handles close against
+  const tp = new THREE.CylinderBufferGeometry(0.0015, 0.0015, BT + 0.0034, 12); tp.rotateZ(Math.PI/2);
+  [[0.0070, 0.0080],[0.0070, -0.0082]].forEach(([f,u])=>{ const m = new THREE.Mesh(tp, M.pin); m.position.set(0, u, -f); blade.add(m); });
   pin.add(blade);
+  const off = h + HT/2 + 0.0012;
   const handle = side => {
-    const h = new THREE.Group();
-    const m = new THREE.Mesh(extrudeProfile(handleShape(), HT, 0.0011), M.handle);
-    m.position.x = side * (BT/2 + HT/2 + 0.0016);
-    h.add(m);
-    // back-spacer along the lower edge turns the plate into a channel
-    const sp = new THREE.Mesh(new THREE.BoxBufferGeometry(0.0026, 0.0032, 0.104), M.spacer);
-    sp.position.set(side * (BT/2 + 0.0010), -0.0106, 0.070);
-    h.add(sp);
-    // pivot screw and the end screw, both sides
-    const screw = new THREE.CylinderBufferGeometry(0.0030, 0.0030, 0.0022, 14);
-    screw.rotateZ(Math.PI/2);
-    const a = new THREE.Mesh(screw, M.pin); a.position.set(side*(BT/2 + HT + 0.0025), 0, 0); h.add(a);
-    const b = new THREE.Mesh(screw, M.pin); b.position.set(side*(BT/2 + HT + 0.0025), 0, 0.124); h.add(b);
-    return h;
+    const g = new THREE.Group();
+    const plate = new THREE.Mesh(extrudeProfile(handleShape(), HT, 0.0011, 3), M.handle);
+    plate.position.x = side * off; g.add(plate);
+    // spacer rail along the bottom turns the plate into a channel
+    const rail = new THREE.CylinderBufferGeometry(0.0013, 0.0013, 0.090, 10); rail.rotateX(Math.PI/2);
+    const r = new THREE.Mesh(rail, M.spacer); r.position.set(side*(h + 0.0010), -0.0104, 0.066); g.add(r);
+    // pivot and end screws: a chamfered head with a dark driver socket
+    const head = (rad, z)=>{
+      const sg = new THREE.CylinderBufferGeometry(rad*0.84, rad, 0.0016, 20); sg.rotateZ(-side*Math.PI/2);
+      const m = new THREE.Mesh(sg, M.pin); m.position.set(side*(off + HT/2 + 0.0017), 0, z); g.add(m);
+      const kg = new THREE.CylinderBufferGeometry(rad*0.38, rad*0.38, 0.0004, 6); kg.rotateZ(Math.PI/2);
+      const k = new THREE.Mesh(kg, M.socket); k.position.set(side*(off + HT/2 + 0.0026), 0, z); g.add(k);
+    };
+    head(0.0046, 0); head(0.0034, 0.1085);
+    return g;
   };
   const safe = handle(-1), bite = handle(1);
-  // latch on the bite handle
-  const latch = new THREE.Mesh(new THREE.BoxBufferGeometry(0.0022, 0.0030, 0.020), M.pin);
-  latch.position.set(0.0012, -0.0120, 0.112); bite.add(latch);
+  // latch: a flat bar pinned at the butt of the bite handle
+  const latch = new THREE.Mesh(new THREE.BoxBufferGeometry(0.0020, 0.0026, 0.026), M.pin);
+  latch.position.set(0.0010, -0.0118, 0.106); bite.add(latch);
+  const lp = new THREE.CylinderBufferGeometry(0.0018, 0.0018, 0.0034, 12); lp.rotateZ(Math.PI/2);
+  const lpm = new THREE.Mesh(lp, M.pin); lpm.position.set(0.0010, -0.0118, 0.118); bite.add(lpm);
   pin.add(safe, bite);
   return {pin, blade, safe, bite};
-}
-// a gloved hand wrapped round the safe handle, and the sleeve behind it
-function makeKnifeHand(){
-  const M = knifeMaterials();
-  const hand = new THREE.Group();
-  const sph = (rx, ry, rz, mat)=>{ const m = new THREE.Mesh(new THREE.SphereBufferGeometry(1, 16, 12), mat); m.scale.set(rx, ry, rz); return m; };
-  const cyl = (r0, r1, len, mat)=>{ const g = new THREE.CylinderBufferGeometry(r1, r0, len, 14); g.translate(0, len/2, 0); return new THREE.Mesh(g, mat); };
-  // palm hugs the handles from the right-hand side
-  const palm = sph(0.028, 0.030, 0.040, M.glove); palm.position.set(0.020, -0.004, 0.070); hand.add(palm);
-  // four fingers curl under and round the handles
-  for(let i=0;i<4;i++){
-    const f = new THREE.Group();
-    f.position.set(0.012, -0.016, 0.040 + i*0.018);
-    const p1 = cyl(0.0078, 0.0072, 0.020, M.glove); p1.rotation.z = 2.2; f.add(p1);
-    const k = new THREE.Group(); k.position.set(-0.016, -0.012, 0); f.add(k);
-    const p2 = cyl(0.0072, 0.0064, 0.018, M.glove); p2.rotation.z = 0.95; k.add(p2);
-    const tip = sph(0.0066, 0.0066, 0.0066, M.glove); tip.position.set(-0.014, 0.010, 0); k.add(tip);
-    hand.add(f);
-  }
-  // thumb along the top of the handle, towards the pivot
-  const th = cyl(0.0090, 0.0075, 0.034, M.glove); th.position.set(0.008, 0.012, 0.060);
-  th.rotation.set(-1.45, 0, 0.25); hand.add(th);
-  const thTip = sph(0.0078, 0.0070, 0.0090, M.glove); thTip.position.set(0.004, 0.014, 0.026); hand.add(thTip);
-  // knuckle strap and wrist
-  const strap = sph(0.030, 0.012, 0.028, M.gloveDark); strap.position.set(0.030, 0.008, 0.074); hand.add(strap);
-  const wrist = cyl(0.030, 0.026, 0.060, M.glove); wrist.position.set(0.024, -0.004, 0.100);
-  wrist.rotation.x = Math.PI/2 + 0.15; hand.add(wrist);
-  const cuff = cyl(0.036, 0.034, 0.030, M.gloveDark); cuff.position.set(0.024, -0.004, 0.150);
-  cuff.rotation.x = Math.PI/2 + 0.15; hand.add(cuff);
-  const sleeve = cyl(0.050, 0.042, 0.24, M.sleeve); sleeve.position.set(0.026, -0.010, 0.170);
-  sleeve.rotation.x = Math.PI/2 + 0.18; hand.add(sleeve);
-  return hand;
 }
 // ---------------------------------------------------------------------------
 // Weapon building blocks. Big shapes are side profiles extruded with a bevel;
@@ -2580,7 +2670,12 @@ function refreshAudioGate(){
 }
 const ICON_ON  = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="M15.5 8.5a5 5 0 0 1 0 7M19 5a10 10 0 0 1 0 14"/></svg>';
 const ICON_OFF = '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 5 6 9H2v6h4l5 4V5z"/><path d="m22 9-6 6M16 9l6 6"/></svg>';
-let toastTimer = 0;
+let toastTimer = 0, partyTimer = 0;
+function partyToast(html){
+  const t = el('partytoast'); if(!t) return;
+  t.innerHTML = html; t.className = 'show';
+  clearTimeout(partyTimer); partyTimer = setTimeout(()=>{ t.className = ''; }, 3200);
+}
 function showMuteState(toast){
   const b = el('mutebadge');
   if(b){
@@ -3614,6 +3709,14 @@ function wireNet(){
       renderLobby();
     },
     match(m){
+      const kindNow = m.mode === 'knock' ? 2 : (m.mode === 'duel' ? 1 : 0);
+      if(kindNow !== S.mode){
+        S.mode = kindNow; modeNote();
+        const mp = el('modePick');
+        if(mp && mp.children) [...mp.children].forEach((c,j)=>c.setAttribute && c.setAttribute('aria-pressed', j===kindNow?'true':'false'));
+      }
+      const me = ((el('pname').value || '').trim()) || 'Player';
+      if(m.by && m.by !== me) partyToast(esc(m.by) + ' switched the party to <b>' + esc(m.label || m.mode) + '</b>');
       match.target = m.target;
       match.time = m.time;
       const kind = m.mode === 'knock' ? 'knock' : (m.mode === 'duel' ? 'duel' : 'ffa');
@@ -3729,6 +3832,7 @@ function initFXOnce(){ if(!fxReady){ initFX(); initFX2(); fxReady=true; } }
 
 function leaveMatch(){
   stopWaiting();
+  try { if(document.fullscreenElement && document.exitFullscreen){ if(navigator.keyboard && navigator.keyboard.unlock) navigator.keyboard.unlock(); document.exitFullscreen().catch(()=>{}); } } catch(e){}
   match.running=false;
   intro.active = false;
   el('intro').classList.add('hidden');
@@ -3746,11 +3850,25 @@ function leaveMatch(){
 /* ============================================================
    input
    ============================================================ */
-function requestLock(){
-  canvas.requestPointerLock&&canvas.requestPointerLock();
-  // in fullscreen, Chrome and Edge let a page keep keys like Ctrl+W for itself
-  try { if(document.fullscreenElement && navigator.keyboard && navigator.keyboard.lock) navigator.keyboard.lock(); } catch(e){}
+// Keys the game uses. In fullscreen, Chrome and Edge let a page claim them, which
+// also swallows Ctrl + those keys (so Ctrl+W no longer closes the tab). Escape is
+// left out on purpose so it still opens the pause menu.
+const LOCK_KEYS = ['KeyW','KeyA','KeyS','KeyD','KeyC','KeyR','KeyQ','KeyF','KeyM','KeyE','Space','Tab',
+                   'Digit1','Digit2','Digit3','ShiftLeft','ShiftRight','ControlLeft','ControlRight'];
+function lockKeys(){
+  try { if(document.fullscreenElement && navigator.keyboard && navigator.keyboard.lock) navigator.keyboard.lock(LOCK_KEYS).catch(()=>{}); } catch(e){}
 }
+function requestLock(){
+  if(S.fullscreen && !document.fullscreenElement && document.documentElement && document.documentElement.requestFullscreen){
+    try { document.documentElement.requestFullscreen().then(lockKeys).catch(()=>{}); } catch(e){}
+  }
+  canvas.requestPointerLock&&canvas.requestPointerLock();
+  lockKeys();
+}
+// A match in progress asks before the tab closes, whatever closed it
+window.addEventListener('beforeunload', e=>{
+  if(match.running || intro.active){ e.preventDefault(); e.returnValue = ''; return ''; }
+});
 document.addEventListener('pointerlockchange', ()=>{
   pointerLocked = document.pointerLockElement === canvas;
   if(pointerLocked) lookSettleUntil = performance.now() + 120;
@@ -4331,7 +4449,7 @@ function renderLobby(){
   const m = Net.match;
   hint.innerHTML = m
     ? 'Party is playing <b>' + esc(m.label || m.mode) + '</b> on <b>' + esc(m.mapName || '') + '</b>' +
-      (humans.length ? ' · with friends here, the party picks the mode' : '')
+      (humans.length ? ' · anyone can switch the mode and everyone comes along' : '')
     : '';
 }
 function localStorage_safe(k, v){
@@ -4369,16 +4487,19 @@ function chips(host, items, get, set){
     h.appendChild(b);
   });
 }
-function wireMenu(){
-  const modeNote = ()=>{
+function modeNote(){
     el('modeNote').textContent = MODE().note;
     const oneBot = !!MODE().oneBot;              // knockback runs a single bot profile
     el('diffLabel').style.display = oneBot ? 'none' : '';
     el('diffPick').style.display  = oneBot ? 'none' : '';
     if(!classAllowed(S.cls)) S.cls = pickList()[0];
     buildClassChips();
-  };
-  chips('modePick', MODES.map(m=>m.label), ()=>S.mode, i=>{ S.mode=i; modeNote(); });
+}
+function wireMenu(){
+  chips('modePick', MODES.map(m=>m.label), ()=>S.mode, i=>{
+    S.mode=i; modeNote();
+    if(Net.on && Net.match && Net.match.mode !== MODES[i].key) Net.sendMode(MODES[i].key);   // the party follows
+  });
   modeNote();
   buildClassChips();
   classNote();
@@ -4387,6 +4508,7 @@ function wireMenu(){
     i=>{ S.tod=i; buildWorld(curMap || MAPS[0]); applyQuality(); });
   chips('qualPick', QUALITY.map(q=>q.name), ()=>S.quality, i=>{ S.quality=i; applyQuality(); });
   chips('aimPick', ['Hold to aim','Toggle aim'], ()=>S.aimToggle, i=>{ S.aimToggle=i; });
+  chips('fsPick', ['Off','On'], ()=>S.fullscreen, i=>{ S.fullscreen=i; localStorage_safe('verge.fs', String(i)); });
   chips('qualPick2', QUALITY.map(q=>q.name), ()=>S.quality, i=>{ S.quality=i; applyQuality(); });
 
   el('sens').oninput = e=>{ S.sens = e.target.value/100; el('sensv').textContent = S.sens.toFixed(2); };
@@ -4478,6 +4600,7 @@ function wireMenu(){
   } catch(e){}
   setParty(linkCode || localStorage_safe('verge.party') || newCode());
   muted = localStorage_safe('verge.muted') === '1';
+  if(localStorage_safe('verge.fs') === '0'){ S.fullscreen = 0; chips('fsPick', ['Off','On'], ()=>S.fullscreen, i=>{ S.fullscreen=i; localStorage_safe('verge.fs', String(i)); }); }
   showMuteState(false);
   ensureConnected();
   el('resume').onclick = requestLock;

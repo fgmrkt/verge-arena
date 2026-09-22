@@ -110,7 +110,7 @@ class Room {
     this.snapAcc = 0;
   }
 
-  setMode(modeKey, quiet){
+  setMode(modeKey, quiet, byName){
     this.modeKey = has(MODES, modeKey) ? modeKey : 'ffa';
     this.mode = MODES[this.modeKey];
     this.mapIndex = (Math.random() * World.poolSize(this.mode.kind)) | 0;
@@ -127,7 +127,8 @@ class Room {
       for(const p of this.players.values()) this.respawn(p, true);
       // send the roster with the match so clients can drop the previous mode's
       // fighters instead of keeping them around as ghosts
-      this.broadcast({t:'match', ...this.matchInfo(), roster:this.roster()});
+      this.broadcast({t:'match', ...this.matchInfo(), roster:this.roster(), by: byName || undefined});
+      this.modeAt = now();
     }
   }
 
@@ -826,7 +827,24 @@ wss.on('connection', (ws, req) => {
       }
 
       case 'mode':
-        if(has(MODES, m.mode) && room.humans() <= 1) room.setMode(m.mode);
+        // Anyone in the party can switch the mode and everyone comes along. With
+        // friends there, asking for the mode already being played changes nothing
+        // (so pressing Play never restarts their round); alone it deals a fresh map.
+        if(!has(MODES, m.mode)) break;
+        if(room.humans() > 1 && m.mode === room.modeKey && !room.over) break;
+        {
+          const wait = 1.5 - (now() - (room.modeAt || 0));      // no rapid flip-flopping...
+          clearTimeout(room.modeTimer); room.modeTimer = null;
+          if(wait <= 0){ room.setMode(m.mode, false, me.name); break; }
+          if(m.mode === room.modeKey) break;                     // already there
+          // ...but a quick change of mind is kept and applied once the pause is over,
+          // so what the player picked last is always what the party ends up on
+          const who = me.name, want = m.mode;
+          room.modeTimer = setTimeout(() => {
+            room.modeTimer = null;
+            if(rooms.get(room.name) === room && room.humans() > 0 && want !== room.modeKey) room.setMode(want, false, who);
+          }, wait * 1000);
+        }
         break;
 
       case 'bots':                        // anyone in the party may switch bot filling
@@ -858,6 +876,7 @@ setInterval(() => {
   for(const room of rooms.values()){
     if(room.players.size === 0){
       clearTimeout(room.endTimer);
+      clearTimeout(room.modeTimer);
       rooms.delete(room.name);            // nobody home, stop simulating
       continue;
     }
