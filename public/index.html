@@ -3854,17 +3854,32 @@ function leaveMatch(){
 // also swallows Ctrl + those keys (so Ctrl+W no longer closes the tab). Escape is
 // left out on purpose so it still opens the pause menu.
 const LOCK_KEYS = ['KeyW','KeyA','KeyS','KeyD','KeyC','KeyR','KeyQ','KeyF','KeyM','KeyE','Space','Tab',
-                   'Digit1','Digit2','Digit3','ShiftLeft','ShiftRight','ControlLeft','ControlRight'];
+                   'Digit1','Digit2','Digit3','ShiftLeft','ShiftRight','ControlLeft','ControlRight','Escape'];
 function lockKeys(){
   try { if(document.fullscreenElement && navigator.keyboard && navigator.keyboard.lock) navigator.keyboard.lock(LOCK_KEYS).catch(()=>{}); } catch(e){}
 }
+// The browser only grants pointer lock straight off a click, and it counts that
+// click as spent the moment anything else async runs. So the mouse is grabbed
+// first and fullscreen follows; a refusal is normal (Escape was just pressed,
+// say) and only means the next click grabs it instead.
+function lockPointer(){
+  if(!canvas.requestPointerLock) return;
+  try { const p = canvas.requestPointerLock(); if(p && p.catch) p.catch(()=>{}); } catch(e){}
+}
 function requestLock(){
+  lockPointer();
   if(S.fullscreen && !document.fullscreenElement && document.documentElement && document.documentElement.requestFullscreen){
-    try { document.documentElement.requestFullscreen().then(lockKeys).catch(()=>{}); } catch(e){}
+    try { const p = document.documentElement.requestFullscreen(); if(p && p.catch) p.catch(()=>{}); } catch(e){}
   }
-  canvas.requestPointerLock&&canvas.requestPointerLock();
   lockKeys();
 }
+// entering fullscreen is what allows the keyboard to be held, and the switch can
+// drop the mouse on the way in, so both are settled once it has actually happened
+document.addEventListener('fullscreenchange', ()=>{
+  if(!document.fullscreenElement) return;
+  lockKeys();
+  if((match.running || intro.active) && !document.pointerLockElement) lockPointer();
+});
 // A match in progress asks before the tab closes, whatever closed it
 window.addEventListener('beforeunload', e=>{
   if(match.running || intro.active){ e.preventDefault(); e.returnValue = ''; return ''; }
@@ -3920,6 +3935,14 @@ document.addEventListener('keydown', e=>{
   // with the game in fullscreen the keyboard is also locked, which catches Ctrl+W
   if(pointerLocked && (e.ctrlKey || e.metaKey) && e.code !== 'KeyR'){ e.preventDefault(); }
   keys[e.code]=true;
+  // Escape pauses and unpauses. Holding the keyboard means the browser hands
+  // Escape to us instead of acting on it, so the game does the pausing itself.
+  if(e.code==='Escape' && match.running && !match.over && !intro.active){
+    e.preventDefault();
+    if(document.pointerLockElement) document.exitPointerLock();
+    else if(!el('pause').classList.contains('hidden')) el('resume').onclick();
+    return;
+  }
   if(e.code==='Tab' && match.running){ e.preventDefault(); if(!match.over){ rowsFor(el('boardrows')); el('board').classList.remove('hidden'); } }
   if(!pointerLocked) return;
   if(intro.active && (e.code==='Space' || e.code==='Enter' || e.code==='Escape')){ endIntro(); return; }
@@ -4372,7 +4395,13 @@ function showOops(msg){
   b.classList.remove('hidden');
 }
 window.addEventListener('error', e=>showOops(e.message + (e.lineno ? '  (line ' + e.lineno + ')' : '')));
-window.addEventListener('unhandledrejection', e=>showOops('async: ' + (e.reason && e.reason.message || e.reason)));
+window.addEventListener('unhandledrejection', e=>{
+  const msg = String(e.reason && e.reason.message || e.reason || '');
+  // the browser refusing a mouse grab, fullscreen or a keyboard hold is its own
+  // business, not a crash: it happens whenever a click has gone stale
+  if(/Pointer Lock|pointer lock|[Ff]ullscreen|keyboard lock|gesture/.test(msg)) return;
+  showOops('async: ' + msg);
+});
 
 // ---- parties -----------------------------------------------------------
 // Every browser gets its own party code, so you never land in a stranger's
