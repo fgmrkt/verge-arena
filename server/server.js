@@ -83,6 +83,10 @@ const HEADSHOT = 2;
 // knockback strength; keep in step with KNOCK in public/index.html
 const KNOCK = {mul:0.40, cap:17, lift:0.44, air:0.45, flat:22, up:9.5};
 const KILL_HEAL = 15;
+// A couple of seconds of cover when you appear, so you are not shot before you
+// can see where you are. It ends the moment you attack, so nobody can hide
+// behind it: you are either safe or dangerous, never both.
+const SPAWN_SAFE = 2.5;
 const SPAWN_CLEAR = 26;
 const NAMES = ['Ash','Pike','Nova','Quill','Harlow','Bex','Sable','Corvo','Wren','Juno','Riot','Mox'];
 
@@ -151,7 +155,7 @@ class Room {
       cls: this.mode.classes.includes(cls) ? cls : this.mode.classes[0],
       x:0, y:0, z:0, yaw:0, pitch:0, state:0,
       hp:100, alive:true, kills:0, deaths:0,
-      respawnAt:0, lastSeen: Date.now(), lastShot:0, lastHitBy:null, spawnedAt:0
+      respawnAt:0, lastSeen: Date.now(), lastShot:0, lastHitBy:null, spawnedAt:0, safeUntil:0
     };
     this.players.set(p.id, p);
     this.respawn(p, true);
@@ -239,15 +243,17 @@ class Room {
     e.x = s[0]; e.y = this.world.spawnY; e.z = s[1];
     e.vx = e.vy = e.vz = 0;
     e.hp = 100; e.alive = true; e.respawnAt = 0;
-    e.lastHitBy = null; e.knockLock = 0; e.spawnedAt = now();
+    e.lastHitBy = null; e.knockLock = 0; e.spawnedAt = now(); e.safeUntil = now() + SPAWN_SAFE;
     e.yaw = Math.atan2(s[0], s[1]) + Math.PI;
     if(!this.mode.classes.includes(e.cls)) e.cls = this.mode.classes[0];
-    if(!silent) this.broadcast({t:'spawn', id:e.id, x:e.x, y:e.y, z:e.z, cls:e.cls});
+    if(!silent) this.broadcast({t:'spawn', id:e.id, x:e.x, y:e.y, z:e.z, cls:e.cls, safe:SPAWN_SAFE});
   }
 
   // ---- damage -----------------------------------------------------------
+  safe(e){ return !!e && e.alive && now() < (e.safeUntil || 0); }
   hurt(victim, dmg, attacker, head, weapon){
     if(!victim || !victim.alive || this.over) return;
+    if(this.safe(victim)) return;                      // only just spawned in
     if(!Number.isFinite(dmg) || dmg <= 0) return;
     if(this.mode.knock){
       // knockback mode: no damage at all, only shove. The client applies the
@@ -305,6 +311,7 @@ class Room {
   // here with the same numbers the client uses on itself.
   shove(target, fx, fz, power, by){
     if(!target || !target.alive || this.over) return;
+    if(this.safe(target)) return;                      // only just spawned in
     if(by && by !== target) target.lastHitBy = by.id;
     if(!target.bot){
       this.broadcast({t:'shove', id:target.id, fx, fz, power});
@@ -498,6 +505,7 @@ class Room {
       let best = null, bs = 1e9;
       for(const o of this.everyone()){
         if(o === b || !o.alive) continue;
+        if(this.safe(o)) continue;                                        // leave fresh spawns alone
         const d = this.canSee(b, b.x, b.y+1.5, b.z, o.x, this.eye(o) - 0.3, o.z, K.reach);
         if(d <= 0) continue;
         let score = d;
@@ -801,6 +809,7 @@ wss.on('connection', (ws, req) => {
         bk.tok = Math.min(cap, bk.tok + (t - bk.t) * (arm.rpm/60) * 1.15); bk.t = t;
         if(bk.tok < 1) break;                         // really faster than the gun can fire
         bk.tok -= 1;
+        if(room.safe(me)){ me.safeUntil = 0; room.broadcast({t:'safeover', id:me.id}); }   // attacking gives it up
         me.lastShot = t;
         room.broadcast({t:'fire', id:me.id, cls:me.cls, x:me.x, y:me.y+1.5, z:me.z, yaw:me.yaw, w:m.w}, me.id);
         if(!(ARMS[m.w] && ARMS[m.w].melee)) room.noise(me, m.w === 'usp' ? 18 : 45);

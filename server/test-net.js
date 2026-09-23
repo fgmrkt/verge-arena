@@ -73,6 +73,22 @@ function client(name, room, mode){
   a.move(0, 0, 0);
   b.move(0, 0, -6);
   await sleep(200);
+
+  // a player who has only just appeared cannot be touched
+  b.hurts.length = 0;
+  a.send({t:'shot', w:'ak', hits:[{id:b.id, head:false, falloff:1}]});
+  await sleep(250);
+  ok(b.hurts.filter(h => h.by === a.id).length === 0,
+     'a player who just spawned cannot be shot', 'hp still ' + b.hp);
+
+  // firing gives that cover up, for him as for everyone
+  b.send({t:'shot', w:'usp', hits:[]});
+  await sleep(150);
+  ok(a.msgs.includes('safeover'), 'and shooting gives the cover up');
+
+  a.move(0, 0, 0);
+  b.move(0, 0, -6);
+  await sleep(200);
   // the room is full of bots who also shoot Bob, so attribute the damage
   b.hurts.length = 0;
   a.send({t:'shot', w:'ak', hits:[{id:b.id, head:false, falloff:1}]});
@@ -112,6 +128,7 @@ function client(name, room, mode){
   // bots are shooting Bob too, so keep him planted next to Alice and keep
   // firing until one of OUR shots is the one that finishes him
   a.events.length = 0;
+  b.send({t:'shot', w:'usp', hits:[]});
   let killEvent = null;
   for(let i = 0; i < 8 && !killEvent; i++){
     a.move(0, 0, 0); b.move(0, 0, -6);
@@ -138,6 +155,7 @@ function client(name, room, mode){
   const k2 = client('Shover2', 'test3', 'knock');
   await sleep(500);
   k.move(0, 14.4, 0); k2.move(0, 14.4, -5);
+  k2.send({t:'shot', w:'usp', hits:[]});          // in the fight already, so no spawn cover
   await sleep(200);
   k2.hurts.length = 0;
   k.send({t:'shot', w:'ak', hits:[{id:k2.id, head:false, falloff:1}]});

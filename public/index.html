@@ -190,6 +190,12 @@
   #pulse{position:absolute;inset:0;opacity:0;box-shadow:inset 0 0 130px 26px rgba(200,20,40,.55)}
   #pulse.on{animation:heartbeat 1.15s ease-in-out infinite}
   @keyframes heartbeat{0%,100%{opacity:.18}14%{opacity:.62}28%{opacity:.26}42%{opacity:.5}}
+  /* a moment of cover after you appear */
+  #safe{position:absolute;left:50%;top:18%;transform:translateX(-50%);padding:.42rem .8rem .5rem;border-radius:.6rem;
+  background:rgba(12,16,22,.62);border:1px solid rgba(255,255,255,.14);color:#dfe8f2;font-size:.78rem;
+  letter-spacing:.06em;text-transform:uppercase;text-align:center;pointer-events:none;backdrop-filter:blur(4px)}
+#safe.hidden{display:none}
+#safe i{display:block;height:3px;margin-top:.34rem;border-radius:2px;background:#8fd2ff;transition:width .1s linear}
   /* the optic is real geometry — this is only a soft focus vignette around it */
   #scope{position:absolute;inset:0;display:none;
     background:radial-gradient(circle at 50% 50%, transparent 26%, rgba(9,11,13,.30) 58%, rgba(9,11,13,.62) 88%)}
@@ -316,6 +322,7 @@
 
 <!-- HUD -->
 <div id="hud" class="layer hidden">
+  <div id="safe" class="hidden"><b>Spawn protection</b><i id="safebar"></i></div>
   <div id="vignette"></div>
   <div id="dmg"></div>
   <div id="blood"></div>
@@ -453,6 +460,7 @@
 <!-- PAUSE -->
 <div id="pause" class="sheet hidden"><div class="card">
   <h2>Paused</h2>
+  <div class="note" style="margin:-.5rem 0 .9rem">Fullscreen is off while you're paused, so you can switch tabs freely. Escape pauses and resumes.</div>
   <div class="pausecode">Party <b id="pcode2">-----</b>
     <button class="btn ghost mini" id="copylink2" type="button">Copy invite link</button></div>
   <div class="fieldname">Mouse sensitivity</div>
@@ -1335,12 +1343,19 @@ function bestSpawnYaw(x, y, z){
   }
   return best;
 }
+// A moment of cover when you appear, so nobody can shoot you before you have
+// seen where you are. Attacking gives it up at once.
+const SPAWN_SAFE = 2.5;
+function nowSec(){ return performance.now()/1000; }
+function isSafe(e){ return !!e && e.alive !== false && nowSec() < (e.safeUntil || 0); }
+function dropSafe(e){ if(e) e.safeUntil = 0; }
 function spawnPlayer(){
   const s = farSpawn();
   player.pos.set(s[0], world.spawnY||0, s[1]);
   player.fallen = false; player.lastHitBy = null; player.knockLock = 0;
   player.vel.set(0,0,0);
   player.hp = 100; player.alive = true; player.lastHurt = -99; player.recoilOwed = 0;
+  player.safeUntil = nowSec() + SPAWN_SAFE;
   player.height = HEIGHT; player.eye = EYE; player.crouching = false; player.viewOff = 0; player.stepDy = 0;
   player.sliding = false; player.slideT = 0; player.slideCool = 0; player.roll = 0; player.land = 0;
   player.yaw = bestSpawnYaw(player.pos.x, player.pos.y + EYE, player.pos.z);
@@ -1596,7 +1611,7 @@ function rebuildAvatar(r){
 function driveRemote(b, dt){
   const r = b.net;
   if(!r) return;                      // local bot: botThink drives this one
-  b.alive = r.alive; b.hp = r.hp; b.kills = r.kills; b.deaths = r.deaths;
+  b.alive = r.alive; b.hp = r.hp; b.kills = r.kills; b.deaths = r.deaths; b.safeUntil = r.safeUntil || 0;
   b.mesh.visible = r.alive;
   if(!r.alive){ b.mesh.userData.bar.visible = false; return; }
   b.pos.set(r.rx !== undefined ? r.rx : r.x,
@@ -1661,6 +1676,7 @@ function spawnBotAt(b){
   b.pos.set(s[0], world.spawnY||0, s[1]); b.vel.set(0,0,0);
   b.fallen = false; b.lastHitBy = null; b.knockLock = 0;
   b.hp = botCfg().hp; b.alive = true; b.mesh.visible = true;
+  b.safeUntil = nowSec() + SPAWN_SAFE;
   b.target = null; b.seen = 0; b.strafe = Math.random()<.5?1:-1; b.stuck = 0;
   b.nextFire = performance.now()/1000 + 0.6;    // a moment to get its bearings, not shoot on arrival
   b.yaw = Math.random()*Math.PI*2;
@@ -2809,7 +2825,7 @@ function fireShot(origin, dir, dmg, falloff, shooter, muzzle, claims){
   let bestT = solidT, victim = null, head = false;
   // everyone is fair game except whoever pulled the trigger — bots block and hit each other
   for(let i=0;i<bots.length;i++){
-    const b = bots[i]; if(!b.alive || b===shooter) continue;
+    const b = bots[i]; if(!b.alive || b===shooter || isSafe(b)) continue;
     const bb = botAABB(b);
     const th = rayBox(origin.x,origin.y,origin.z,dir.x,dir.y,dir.z,bb.head);
     const tb = rayBox(origin.x,origin.y,origin.z,dir.x,dir.y,dir.z,bb.body);
@@ -2817,7 +2833,7 @@ function fireShot(origin, dir, dmg, falloff, shooter, muzzle, claims){
     if(th>0 && (tb<0||th<tb)){ t=th; isHead=true; } else if(tb>0){ t=tb; }
     if(t>0 && t<bestT){ bestT=t; victim=b; head=isHead; }
   }
-  if(player.alive && shooter!==player){
+  if(player.alive && shooter!==player && !isSafe(player)){
     const t = rayBox(origin.x,origin.y,origin.z,dir.x,dir.y,dir.z,playerAABB());
     if(t>0 && t<bestT){ bestT=t; victim=player; head=false; }
   }
@@ -2912,6 +2928,7 @@ function applyKnock(victim, dmg, shooter){
   return 0;                                   // shots never wound here: the drop does the killing
 }
 function applyDamage(victim, dmg, shooter, head){
+  if(isSafe(victim)) return;                      // only just spawned in
   dmg = applyKnock(victim, dmg, shooter);
   if(shooter && shooter !== victim) victim.lastHitBy = shooter;
   if(victim === player){
@@ -2968,6 +2985,7 @@ function playerShoot(now){
          * (player.onGround?1:1.9) * (player.crouching && !player.sliding ? 0.72 : 1);
   const eye = tmpA.set(player.pos.x, player.pos.y+player.eye, player.pos.z);
   const muz = muzzlePoint();
+  dropSafe(player);                               // shooting gives up your spawn cover
   const claims = Net.on ? [] : null;
   for(let i=0;i<w.pellets;i++){
     const d = aimDir(sp);
@@ -3034,6 +3052,7 @@ function knifeAttack(now, heavy){
       spark(p.x, p.y, p.z, _hit.nx, _hit.ny, _hit.nz);
     }
   }
+  dropSafe(player);
   if(!best){ if(Net.on) Net.sendShot(heavy ? 'knife2' : 'knife', []); return; }
 
   // from behind? the target's facing and our line of attack point the same way
@@ -3143,13 +3162,13 @@ function botThink(b, dt, now, tick){
   if(b.retarget <= 0 || !b.foe || !b.foe.alive){
     b.retarget = 0.35 + Math.random()*0.5;
     let best = null, bd = 1e9;
-    if(player.alive && !intro.active){      // nobody shoots the player during the flyover
+    if(player.alive && !intro.active && !isSafe(player)){   // nobody shoots during the flyover, or a fresh spawn
       const d = losTo(b, player.pos.x, player.pos.y+foeEye(player), player.pos.z);
       if(d>0 && d<bd){ bd=d; best=player; }
     }
     for(let i=0;i<bots.length;i++){
       const o = bots[i];
-      if(o===b || !o.alive) continue;
+      if(o===b || !o.alive || isSafe(o)) continue;
       const d = losTo(b, o.pos.x, o.pos.y+1.45, o.pos.z);
       if(d>0 && d<bd){ bd=d; best=o; }
     }
@@ -3176,8 +3195,9 @@ function botThink(b, dt, now, tick){
     wz = Math.cos(toF)*want + sz*0.85;
     if(Math.random()<dt*0.5) b.strafe *= -1;
 
-    if(b.seen > D.react && now > b.nextFire){
+    if(b.seen > D.react && now > b.nextFire && !isSafe(b.foe)){
       const kn = MODE().knock;
+      dropSafe(b);
       // controlled bursts: a run of rounds at the weapon's own rate, then a pause to
       // re-settle, rather than one lonely shot every half second
       if(b.burst <= 0) b.burst = kn ? Math.ceil(K.burst * 1.5) : K.burst;
@@ -3473,6 +3493,13 @@ function setText(id, v){ if(_last[id]!==v){ _last[id]=v; el(id).textContent = v;
 function setStyle(id, prop, v){ const k=id+prop; if(_last[k]!==v){ _last[k]=v; el(id).style[prop]=v; } }
 function updateHUD(full){
   if(!player.loadout.length) return;      // nothing to show until a match starts
+  const left = (player.safeUntil || 0) - nowSec();
+  const showSafe = player.alive && left > 0;
+  if(showSafe !== _last.safe){
+    _last.safe = showSafe;
+    if(showSafe) el('safe').classList.remove('hidden'); else el('safe').classList.add('hidden');
+  }
+  if(showSafe) setStyle('safebar','width', Math.round(clamp(left/SPAWN_SAFE,0,1)*100) + '%');
   const hp = Math.ceil(player.hp);
   setText('hp', hp);
   setStyle('hpfill','width', hp+'%');
@@ -3746,10 +3773,16 @@ function wireNet(){
     spawned(m){
       if(m.id === Net.id){
         if(!player.alive) reviveLocal({x:m.x, y:m.y, z:m.z, hp:100});
+        else player.safeUntil = nowSec() + (m.safe || SPAWN_SAFE);
         return;
       }
       const r = Net.remote.get(m.id);
+      if(r) r.safeUntil = nowSec() + (m.safe || SPAWN_SAFE);
       if(r && m.cls !== undefined && m.cls !== r.cls){ r.cls = m.cls; rebuildAvatar(r); }
+    },
+    safeOver(m){                                  // they attacked, so they are fair game again
+      if(m.id === Net.id) dropSafe(player);
+      else dropSafe(Net.remote.get(m.id));
     },
     selfState(s){
       // the server is the authority on whether we are alive and how hurt we are
@@ -3775,7 +3808,7 @@ function wireNet(){
       updateHUD(false);
     },
     shove(m){
-      if(m.id !== Net.id) return;
+      if(m.id !== Net.id || isSafe(player)) return;
       const dx = player.pos.x - m.fx, dz = player.pos.z - m.fz;
       const len = Math.hypot(dx,dz) || 1;
       const air = !player.onGround;
@@ -3820,6 +3853,7 @@ function killLocal(){
 }
 function reviveLocal(s){
   player.alive = true; player.hp = s.hp || 100;
+  player.safeUntil = nowSec() + SPAWN_SAFE;
   player.pos.set(s.x, s.y, s.z); player.vel.set(0,0,0);
   player.height = HEIGHT; player.eye = EYE; player.knockLock = 0;
   player.fallen = false; player.lastHitBy = null; exitADS();
@@ -3832,7 +3866,7 @@ function initFXOnce(){ if(!fxReady){ initFX(); initFX2(); fxReady=true; } }
 
 function leaveMatch(){
   stopWaiting();
-  try { if(document.fullscreenElement && document.exitFullscreen){ if(navigator.keyboard && navigator.keyboard.unlock) navigator.keyboard.unlock(); document.exitFullscreen().catch(()=>{}); } } catch(e){}
+  releaseLock();
   match.running=false;
   intro.active = false;
   el('intro').classList.add('hidden');
@@ -3851,8 +3885,9 @@ function leaveMatch(){
    input
    ============================================================ */
 // Keys the game uses. In fullscreen, Chrome and Edge let a page claim them, which
-// also swallows Ctrl + those keys (so Ctrl+W no longer closes the tab). Escape is
-// left out on purpose so it still opens the pause menu.
+// also swallows Ctrl + those keys, so Ctrl+W no longer closes the tab mid-fight.
+// That grip is only held while you are actually playing: pausing hands the
+// keyboard and the screen straight back, so switching tabs is a single Escape.
 const LOCK_KEYS = ['KeyW','KeyA','KeyS','KeyD','KeyC','KeyR','KeyQ','KeyF','KeyM','KeyE','Space','Tab',
                    'Digit1','Digit2','Digit3','ShiftLeft','ShiftRight','ControlLeft','ControlRight','Escape'];
 function lockKeys(){
@@ -3865,6 +3900,16 @@ function lockKeys(){
 function lockPointer(){
   if(!canvas.requestPointerLock) return;
   try { const p = canvas.requestPointerLock(); if(p && p.catch) p.catch(()=>{}); } catch(e){}
+}
+// hand the screen and the keyboard back: the moment the game is paused, the
+// browser behaves normally again — Escape, Ctrl+W, clicking another tab, all of it
+function releaseLock(){
+  try { if(navigator.keyboard && navigator.keyboard.unlock) navigator.keyboard.unlock(); } catch(e){}
+  try {
+    if(document.fullscreenElement && document.exitFullscreen){
+      const p = document.exitFullscreen(); if(p && p.catch) p.catch(()=>{});
+    }
+  } catch(e){}
 }
 function requestLock(){
   lockPointer();
@@ -3881,19 +3926,24 @@ document.addEventListener('fullscreenchange', ()=>{
   if((match.running || intro.active) && !document.pointerLockElement) lockPointer();
 });
 // A match in progress asks before the tab closes, whatever closed it
+// Only while you are actually in the fight: once paused, closing the tab is
+// clearly what you meant and the browser should not argue about it.
 window.addEventListener('beforeunload', e=>{
-  if(match.running || intro.active){ e.preventDefault(); e.returnValue = ''; return ''; }
+  if(pointerLocked && (match.running || intro.active)){ e.preventDefault(); e.returnValue = ''; return ''; }
 });
 document.addEventListener('pointerlockchange', ()=>{
   pointerLocked = document.pointerLockElement === canvas;
   if(pointerLocked) lookSettleUntil = performance.now() + 120;
   refreshAudioGate();
-  if(!pointerLocked && match.running && !match.over){
-    el('pause').classList.remove('hidden');
-    el('sens2').value = Math.round(S.sens*100); el('sens2v').textContent = S.sens.toFixed(2);
-  } else {
-    el('pause').classList.add('hidden');
+  if(!pointerLocked){
+    releaseLock();                          // paused or tabbed away: the browser is yours again
+    if(match.running && !match.over){
+      el('pause').classList.remove('hidden');
+      el('sens2').value = Math.round(S.sens*100); el('sens2v').textContent = S.sens.toFixed(2);
+      return;
+    }
   }
+  el('pause').classList.add('hidden');
 });
 let lookSettleUntil = 0;
 document.addEventListener('mousemove', e=>{

@@ -6,7 +6,7 @@
  * What travels:
  *   up    hello, state (20/s), shot, class, mode, ping
  *   down  welcome, join, leave, snap (15/s), fire, hurt, heal, kill, spawn,
- *         shove, match, end, pong
+ *         safeover, shove, match, end, pong
  *
  * Your own movement is simulated locally and merely reported, so it never feels
  * laggy. Everyone else is interpolated between the last two snapshots, which
@@ -180,7 +180,12 @@ function handle(m){
       if(m.id === Net.id) emit('healed', m);
       break;
     case 'kill':   emit('kill', m); break;
-    case 'spawn':  emit('spawned', m); break;
+    case 'spawn':
+      { const r = Net.remote.get(m.id); if(r) r.safeUntil = performance.now()/1000 + (m.safe || 0); }
+      emit('spawned', m); break;
+    case 'safeover':
+      { const r = Net.remote.get(m.id); if(r) r.safeUntil = 0; }
+      emit('safeOver', m); break;
     case 'shove':  emit('shove', m); break;
     case 'end':
       if(Net.match){ Net.match.over = true; Net.match.nextAt = performance.now() + (m.next || 8)*1000; }
