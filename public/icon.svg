@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Verge Arena">
+  <rect width="64" height="64" rx="13" fill="#10151a"/>
+  <path d="M9 12 H21 L32 34.5 L32 53 Z" fill="#f2f0ea"/>
+  <path d="M55 12 H43 L32 34.5 L32 53 Z" fill="#e23b57"/>
+</svg>

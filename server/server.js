@@ -724,6 +724,7 @@ function integrate(W, e, dt, r, h){
 // ---------------------------------------------------------------------------
 const MIME = {'.html':'text/html; charset=utf-8', '.js':'text/javascript; charset=utf-8',
               '.css':'text/css', '.png':'image/png', '.ico':'image/x-icon',
+              '.svg':'image/svg+xml', '.webmanifest':'application/manifest+json',
               '.json':'application/json'};
 
 const server = http.createServer((req, res) => {

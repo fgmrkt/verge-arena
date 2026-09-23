@@ -1,0 +1,14 @@
+{
+  "name": "VergeArena",
+  "short_name": "Verge",
+  "description": "Browser arena shooter — play with friends in one click.",
+  "start_url": "/",
+  "display": "fullscreen",
+  "background_color": "#10151a",
+  "theme_color": "#10151a",
+  "icons": [
+    { "src": "/icon.svg", "type": "image/svg+xml", "sizes": "any", "purpose": "any" },
+    { "src": "/favicon-32.png", "type": "image/png", "sizes": "32x32" },
+    { "src": "/apple-touch-icon.png", "type": "image/png", "sizes": "180x180" }
+  ]
+}
