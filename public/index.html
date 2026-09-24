@@ -79,6 +79,8 @@
   @media(max-width:720px){.cols{grid-template-columns:1fr}}
   .fieldname{font-size:.82rem;color:var(--mute);margin-bottom:.5rem}
   .choices{display:flex;flex-wrap:wrap;gap:.4rem;margin-bottom:1.15rem}
+  .chip .dot{display:inline-block;width:.55rem;height:.55rem;border-radius:50%;margin-right:.42rem;
+    vertical-align:baseline;box-shadow:inset 0 0 0 1px rgba(0,0,0,.35)}
   .chip{
     padding:.45rem .8rem;border-radius:2px;font-size:.88rem;
     box-shadow:inset 0 0 0 1px var(--line);color:var(--mute);
@@ -423,6 +425,11 @@
         <div class="fieldname">Class</div>
         <div class="choices" id="clsPick"></div>
         <div class="note" id="clsNote" style="display:block;margin:-.75rem 0 1.15rem"></div>
+        <div class="fieldname">Knife</div>
+        <div class="choices" id="knifePick"></div>
+        <div class="fieldname">Finish</div>
+        <div class="choices" id="finishPick"></div>
+        <div class="note" id="knifeNote" style="display:block;margin:-.75rem 0 1.15rem"></div>
         <div class="fieldname" id="diffLabel">Opponent skill</div>
         <div class="choices" id="diffPick"></div>
       </div>
@@ -449,7 +456,7 @@
           <b>Space</b><span>Jump, or hop out of a slide</span>
           <b>Left mouse</b><span>Fire</span>
           <b>Right mouse / Q</b><span>Aim — the Marksman's scope is a real optic</span>
-          <b>1 / 2 / 3 / Wheel</b><span>Switch weapon — 3 is your butterfly knife</span>
+          <b>1 / 2 / 3 / Wheel</b><span>Switch weapon — 3 is your knife</span>
           <b>Knife</b><span>Left mouse slashes, right mouse stabs, from behind it always kills. F to flip it.</span>
           <b>R</b><span>Reload</span>
           <b>Tab</b><span>Scoreboard</span>
@@ -517,7 +524,8 @@ const pick = a=>a[(Math.random()*a.length)|0];
    settings
    ============================================================ */
 const S = {
-  map:0, mode:0, cls:0, tod:0, bots:6, diff:1, sens:1.00, fov:88, volume:0.7, quality:1, fpsShown:true, aimToggle:0, fullscreen:1
+  map:0, mode:0, cls:0, tod:0, bots:6, diff:1, sens:1.00, fov:88, volume:0.7, quality:1, fpsShown:true, aimToggle:0, fullscreen:1,
+  knife:0                              // which knife you carry, an index into KNIVES
 };
 const MODES = [
   {key:'ffa',   label:'FFA',       name:'Free-for-all', bots:9,    target:15, time:360, knock:0, arena:false, classes:[0,1,2,3],
@@ -1313,7 +1321,7 @@ function resetPlayerLoadout(){
   player.cls = classAllowed(S.cls) ? S.cls : pickList()[0];   // some modes bar some classes
   player.loadout = CLASSES[player.cls].guns.map(k=>ARMS[k]).filter(Boolean);
   if(!player.loadout.length) player.loadout = [ARMS[CLASSES[0].guns[0]], ARMS[CLASSES[0].guns[1]]];
-  player.loadout.push(ARMS.knife);                      // every class carries the butterfly knife
+  player.loadout.push(ARMS.knife);                      // every class carries a knife
   player.ammo = player.loadout.map(w=>w.mag);
   player.gun = 0; player.reloading = 0; player.nextShot = 0;
   selectGunModel(0);
@@ -1550,7 +1558,7 @@ function limb(geo){
   m.castShadow = true; m.receiveShadow = true;
   return m;
 }
-function makeBotMesh(cls){
+function makeBotMesh(cls, knifeIdx){
   const g = new THREE.Group();
   const torso = limb(geoTorsos[cls]); torso.position.y = 0.92;
 
@@ -1565,7 +1573,8 @@ function makeBotMesh(cls){
   const shinR  = limb(geoShin);  shinR.position.y = -0.46; thighR.add(shinR);
 
   const gun = limb(BOT_GUNS[cls]); gun.position.set(0.17,1.24,-0.14);
-  const knife = makeButterfly().pin; knife.scale.setScalar(1.4);
+  const knife = makeKnifeModel(knifeDef(knifeIdx || 0)).pin;
+  knife.scale.setScalar(knifeDef(knifeIdx || 0).kind === 'm9' ? 1.1 : 1.4);
   knife.position.set(0.22,1.10,-0.24); knife.rotation.x = -0.6; knife.visible = false;
   g.add(torso, armL, armR, thighL, thighR, gun, knife);
 
@@ -1598,7 +1607,7 @@ function makeBotMesh(cls){
 function syncRemoteAvatars(){
   Net.remote.forEach(r=>{
     if(r.avatar) return;
-    const mesh = makeBotMesh(r.cls || 0);
+    const mesh = makeBotMesh(r.cls || 0, r.knife || 0);
     scene.add(mesh);
     r.avatar = { mesh:mesh, walk:0, vis:false, pdist:999 };
     bots.push({ net:r, mesh:mesh, cls:r.cls||0, name:r.name,
@@ -1707,7 +1716,7 @@ function makeBots(n){
   while(deck.length < n) deck.push(...pool.slice().sort(()=>Math.random()-.5));
   for(let i=0;i<n;i++){
     const cls = deck[i];
-    const mesh = makeBotMesh(cls); scene.add(mesh);
+    const mesh = makeBotMesh(cls, (Math.random()*KNIVES.length)|0); scene.add(mesh);
     const b = {
       name:names[i%names.length], cls:cls, mesh:mesh, pos:new V3(), vel:new V3(),
       hp:100, alive:true, onGround:true, yaw:0, target:null, seen:0,
@@ -2194,36 +2203,81 @@ function brushedTexture(){
   t.repeat.set(7, 7);
   return t;
 }
-const knifeMats = {};
-function knifeMaterials(){
-  if(knifeMats.steel) return knifeMats;
+// Gem finishes. A real doppler blade is a black-chrome coat with the colour
+// swirled through it, so the map is a marbled wash of the gem colour over a dark
+// base; the metal underneath does the rest.
+function gemTexture(dark, mid, bright){
+  const c = document.createElement('canvas'); c.width = c.height = 256;
+  const g = c.getContext('2d');
+  if(!g || !g.fillRect) return null;
+  const hex = v => '#' + ('000000' + v.toString(16)).slice(-6);
+  g.fillStyle = hex(dark); g.fillRect(0, 0, 256, 256);
+  // broad swirls of the gem colour
+  for(let i=0;i<26;i++){
+    const x = Math.random()*256, y = Math.random()*256, r = 24 + Math.random()*70;
+    const gr = g.createRadialGradient(x, y, 0, x, y, r);
+    gr.addColorStop(0, hex(Math.random() < 0.34 ? bright : mid));
+    gr.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = gr; g.beginPath(); g.arc(x, y, r, 0, Math.PI*2); g.fill();
+  }
+  // fine veins, the thing that makes it read as stone rather than paint
+  g.lineWidth = 1.2;
+  for(let i=0;i<70;i++){
+    g.strokeStyle = 'rgba(255,255,255,' + (0.05 + Math.random()*0.16).toFixed(2) + ')';
+    g.beginPath();
+    let x = Math.random()*256, y = Math.random()*256;
+    g.moveTo(x, y);
+    for(let k=0;k<5;k++){ x += (Math.random()-0.5)*90; y += (Math.random()-0.5)*60; g.lineTo(x, y); }
+    g.stroke();
+  }
+  const t = new THREE.CanvasTexture(c);
+  t.wrapS = t.wrapT = THREE.RepeatWrapping;
+  t.repeat.set(5, 5);
+  return t;
+}
+const FINISH = {
+  steel:    {name:'',          blade:0xcdd3d9, edge:0xe4e8ec},
+  emerald:  {name:'Emerald',   blade:0x2f7d55, edge:0x7ff0b4, gem:[0x07301c, 0x1f8f57, 0x76ffc0]},
+  ruby:     {name:'Ruby',      blade:0x8e1f32, edge:0xff7f95, gem:[0x33040e, 0xa81f38, 0xff8ba0]},
+  sapphire: {name:'Sapphire',  blade:0x244a86, edge:0x86baff, gem:[0x06142f, 0x22539e, 0x8fc6ff]}
+};
+const knifeMatSets = {};
+function knifeMaterials(finish){
+  finish = FINISH[finish] ? finish : 'steel';
+  if(knifeMatSets[finish]) return knifeMatSets[finish];
+  const F = FINISH[finish], M = {};
   const env = knifeStudioEnv();
   if(env && THREE.MeshStandardMaterial){
     const brush = brushedTexture();
+    const gem = F.gem ? gemTexture(F.gem[0], F.gem[1], F.gem[2]) : null;
     const S = (o)=> new THREE.MeshStandardMaterial(Object.assign({envMap:env, envMapIntensity:1.0}, o));
-    knifeMats.steel  = S({color:0xcdd3d9, metalness:1.0, roughness:0.40, roughnessMap:brush});          // satin flats
-    knifeMats.edge   = S({color:0xe4e8ec, metalness:1.0, roughness:0.13, side:THREE.DoubleSide});      // polished grind
-    knifeMats.handle = S({color:0x444b55, metalness:0.80, roughness:0.46, roughnessMap:brush});         // anodised titanium
-    knifeMats.spacer = S({color:0x131518, metalness:0.4, roughness:0.55});
-    knifeMats.pin    = S({color:0xd2d7dc, metalness:1.0, roughness:0.20});
-    knifeMats.socket = S({color:0x0b0c0e, metalness:0.3, roughness:0.7});
-    knifeMats.accent = S({color:0xc8354c, metalness:0.6, roughness:0.35});
+    M.steel  = gem ? S({color:0xffffff, map:gem, metalness:1.0, roughness:0.22, envMapIntensity:1.25})
+                   : S({color:0xcdd3d9, metalness:1.0, roughness:0.40, roughnessMap:brush});        // satin flats
+    M.edge   = S({color:F.edge, metalness:1.0, roughness:0.11, side:THREE.DoubleSide});             // polished grind
+    M.handle = S({color:0x444b55, metalness:0.80, roughness:0.46, roughnessMap:brush});             // anodised titanium
+    M.spacer = S({color:0x131518, metalness:0.4, roughness:0.55});
+    M.pin    = S({color:0xd2d7dc, metalness:1.0, roughness:0.20});
+    M.socket = S({color:0x0b0c0e, metalness:0.3, roughness:0.7});
+    M.grip   = S({color:0x1a1d22, metalness:0.2, roughness:0.72});                                  // moulded handle
+    M.accent = S({color:F.gem ? F.blade : 0xc8354c, metalness:0.7, roughness:0.3});
   } else {
     const cube = knifeEnvMap();
     const P = (c, sp, sh, refl)=> new THREE.MeshPhongMaterial({color:c, specular:sp, shininess:sh,
                                     envMap:refl ? cube : null, reflectivity:refl||0, combine:THREE.MixOperation});
-    knifeMats.steel = P(0xaeb6be, 0xdfe6ec, 60, 0.34);
-    knifeMats.edge = P(0xe9eef2, 0xffffff, 160, 0.72); knifeMats.edge.side = THREE.DoubleSide;
-    knifeMats.handle = P(0x3b4048, 0xa9b2bc, 80, 0.18);
-    knifeMats.spacer = P(0x15171a, 0x3a3f45, 30, 0);
-    knifeMats.pin = P(0xb8bec5, 0xffffff, 120, 0.5);
-    knifeMats.socket = P(0x0b0c0e, 0x222222, 10, 0);
-    knifeMats.accent = P(0xc8354c, 0x662222, 40, 0);
+    M.steel = P(F.blade, 0xdfe6ec, 60, 0.34);
+    M.edge = P(F.edge, 0xffffff, 160, 0.72); M.edge.side = THREE.DoubleSide;
+    M.handle = P(0x3b4048, 0xa9b2bc, 80, 0.18);
+    M.spacer = P(0x15171a, 0x3a3f45, 30, 0);
+    M.pin = P(0xb8bec5, 0xffffff, 120, 0.5);
+    M.socket = P(0x0b0c0e, 0x222222, 10, 0);
+    M.grip = P(0x1a1d22, 0x24282d, 12, 0);
+    M.accent = P(F.gem ? F.blade : 0xc8354c, 0x662222, 40, 0);
   }
-  knifeMats.glove = new THREE.MeshPhongMaterial({color:0x24282e, specular:0x30353b, shininess:14});
-  knifeMats.gloveDark = new THREE.MeshPhongMaterial({color:0x16181c, specular:0x22262b, shininess:10});
-  knifeMats.sleeve = new THREE.MeshPhongMaterial({color:0x171a1f, specular:0x15181b, shininess:4});
-  return knifeMats;
+  M.glove = new THREE.MeshPhongMaterial({color:0x24282e, specular:0x30353b, shininess:14});
+  M.gloveDark = new THREE.MeshPhongMaterial({color:0x16181c, specular:0x22262b, shininess:10});
+  M.sleeve = new THREE.MeshPhongMaterial({color:0x171a1f, specular:0x15181b, shininess:4});
+  knifeMatSets[finish] = M;
+  return M;
 }
 function extrudeProfile(shape, depth, bevel, segs){
   const g = new THREE.ExtrudeBufferGeometry(shape, {depth:depth, bevelEnabled:!!bevel, bevelThickness:bevel||0,
@@ -2235,8 +2289,8 @@ function extrudeProfile(shape, depth, bevel, segs){
   return g;
 }
 // the knife on its own: used in your hand and, scaled, on other players
-function makeButterfly(){
-  const M = knifeMaterials(), B = BLADE;
+function makeButterfly(finish){
+  const M = knifeMaterials(finish), B = BLADE;
   const BT = B.T, HT = 0.0036, h = BT/2;
   const pin = new THREE.Group();
   const blade = new THREE.Group();
@@ -2273,6 +2327,116 @@ function makeButterfly(){
   const lpm = new THREE.Mesh(lp, M.pin); lpm.position.set(0.0010, -0.0118, 0.118); bite.add(lpm);
   pin.add(safe, bite);
   return {pin, blade, safe, bite};
+}
+// ---------------------------------------------------------------------------
+// M9 bayonet: a fixed blade, so nothing folds. Bowie clip point, sawback teeth
+// along the spine, a crossguard with the ring cut in it, and a ribbed grip
+// ending in a steel pommel. Same profile machinery as the butterfly's blade.
+// ---------------------------------------------------------------------------
+const M9BLADE = (function(){
+  const N = 36, tip = [0.186, 0.0045];
+  const q = (a, c, b, t)=>[ (1-t)*(1-t)*a[0] + 2*t*(1-t)*c[0] + t*t*b[0],
+                            (1-t)*(1-t)*a[1] + 2*t*(1-t)*c[1] + t*t*b[1] ];
+  const E = [], NS = 12;
+  for(let i=0;i<=NS;i++){ const t = i/NS; E.push([0.022 + (0.118-0.022)*t, -0.0188 + 0.0006*t]); }
+  for(let i=1;i<=N-NS;i++) E.push(q([0.118,-0.0182], [0.176,-0.0158], tip, i/(N-NS)));
+  const g0 = [0.028, -0.0020], G = E.map((p,i)=>{
+    if(i === 0) return g0.slice();
+    const x = p[0], y = g0[1] + (x - g0[0]) * (tip[1] - g0[1]) / (tip[0] - g0[0]);
+    return [x, Math.max(y, p[1])];
+  });
+  G[N] = tip.slice();
+  const C = [], W = [];
+  for(let i=0;i<=24;i++){
+    const t = i/24, c = q([0.116, 0.0216], [0.158, 0.0122], tip, t);
+    const off = 0.0060 * Math.sqrt(t) * Math.pow(1-t, 1.15) * 2.2;
+    C.push(c); W.push([c[0], c[1] - off]);
+  }
+  return {E, G, C, W, tip, T:0.0050};
+})();
+function m9FlatShape(){
+  const B = M9BLADE, s = new THREE.Shape();
+  s.moveTo(B.G[0][0], B.G[0][1]);
+  for(let i=1;i<B.G.length;i++) s.lineTo(B.G[i][0], B.G[i][1]);
+  for(let i=B.W.length-2;i>=0;i--) s.lineTo(B.W[i][0], B.W[i][1]);
+  // sawback: eleven teeth cut into the spine, running back towards the guard
+  const x0 = 0.1005, x1 = 0.0385, teeth = 11, step = (x0 - x1)/teeth;
+  s.lineTo(x0, 0.0216);
+  for(let i=0;i<teeth;i++){
+    const a = x0 - i*step;
+    s.lineTo(a - step*0.45, 0.0216 - 0.0042);      // down into the gullet
+    s.lineTo(a - step, 0.0216);                    // and back up to the point
+  }
+  s.lineTo(0.0300, 0.0216);
+  s.lineTo(0.0300, 0.0150);
+  s.lineTo(0.0080, 0.0150);                        // tang, running back into the guard
+  s.lineTo(0.0080, -0.0120);
+  s.lineTo(0.0300, -0.0120);
+  s.lineTo(0.0300, -0.0188);
+  s.lineTo(B.E[0][0], B.E[0][1]);
+  s.quadraticCurveTo(0.0245, -0.0070, B.G[0][0], B.G[0][1]);   // plunge line
+  return s;
+}
+function makeM9(finish){
+  const M = knifeMaterials(finish), B = M9BLADE;
+  const BT = B.T, h = BT/2;
+  const pin = new THREE.Group();
+  const blade = new THREE.Group();
+  blade.add(new THREE.Mesh(extrudeProfile(m9FlatShape(), BT, 0, 0), M.steel));
+  blade.add(new THREE.Mesh(taperStrip(B.E, B.G, 0.00024, h), M.edge));       // primary grind
+  blade.add(new THREE.Mesh(taperStrip(B.C, B.W, 0.00055, h), M.edge));       // swedge
+  pin.add(blade);
+
+  // crossguard, with the ring the bayonet mounts through
+  const guard = new THREE.Shape();
+  guard.moveTo(-0.0075, -0.0170);
+  guard.quadraticCurveTo(-0.0075, -0.0290, 0.0060, -0.0300);   // quillon, swept down and forward
+  guard.quadraticCurveTo(0.0135, -0.0300, 0.0125, -0.0225);
+  guard.lineTo(0.0110, -0.0150);
+  guard.lineTo(0.0110, 0.0210);
+  guard.quadraticCurveTo(0.0110, 0.0262, 0.0055, 0.0262);      // the ring boss on top
+  guard.quadraticCurveTo(-0.0075, 0.0262, -0.0075, 0.0205);
+  guard.lineTo(-0.0075, -0.0170);
+  const ring = new THREE.Path(); ring.absarc(0.0018, 0.0188, 0.0050, 0, Math.PI*2, true);
+  guard.holes.push(ring);
+  const gm = new THREE.Mesh(extrudeProfile(guard, 0.0132, 0.0010, 3), M.handle);
+  pin.add(gm);
+
+  // grip: a ribbed barrel behind the guard, with a steel pommel on the end
+  const grip = new THREE.Group();
+  const body = new THREE.CylinderBufferGeometry(0.0128, 0.0116, 0.100, 20);
+  body.rotateX(Math.PI/2);
+  const bm = new THREE.Mesh(body, M.grip); bm.position.set(0, 0, 0.066); grip.add(bm);
+  for(let i=0;i<7;i++){
+    const r = new THREE.Mesh(new THREE.TorusBufferGeometry(0.0125 - i*0.00014, 0.0011, 8, 20), M.grip);
+    r.position.set(0, 0, 0.030 + i*0.0128);
+    grip.add(r);
+  }
+  const collar = new THREE.Mesh(new THREE.CylinderBufferGeometry(0.0132, 0.0132, 0.0070, 20), M.handle);
+  collar.rotateX(Math.PI/2); collar.position.set(0, 0, 0.0135); grip.add(collar);
+  const pommel = new THREE.Mesh(new THREE.CylinderBufferGeometry(0.0118, 0.0128, 0.0175, 20), M.handle);
+  pommel.rotateX(Math.PI/2); pommel.position.set(0, 0, 0.1245); grip.add(pommel);
+  const lan = new THREE.Mesh(new THREE.TorusBufferGeometry(0.0034, 0.0013, 8, 14), M.pin);
+  lan.position.set(0, 0, 0.1345); grip.add(lan);
+  pin.add(grip);
+  // a fixed blade has no moving halves; the animation checks for these
+  return {pin, blade:null, safe:grip, bite:null};
+}
+// every knife you can carry, and what it is made of
+const KNIVES = [
+  {key:'bfly',      kind:'bfly', finish:'steel',    name:'Butterfly knife'},
+  {key:'bfly-em',   kind:'bfly', finish:'emerald',  name:'Butterfly | Emerald'},
+  {key:'bfly-rb',   kind:'bfly', finish:'ruby',     name:'Butterfly | Ruby'},
+  {key:'bfly-sp',   kind:'bfly', finish:'sapphire', name:'Butterfly | Sapphire'},
+  {key:'m9',        kind:'m9',   finish:'steel',    name:'M9 bayonet'},
+  {key:'m9-em',     kind:'m9',   finish:'emerald',  name:'M9 bayonet | Emerald'},
+  {key:'m9-rb',     kind:'m9',   finish:'ruby',     name:'M9 bayonet | Ruby'},
+  {key:'m9-sp',     kind:'m9',   finish:'sapphire', name:'M9 bayonet | Sapphire'}
+];
+function knifeDef(i){ return KNIVES[(i|0) % KNIVES.length] || KNIVES[0]; }
+function makeKnifeModel(def){
+  def = def || KNIVES[0];
+  return def.kind === 'm9' ? makeM9(def.finish) : makeButterfly(def.finish);
 }
 // ---------------------------------------------------------------------------
 // Weapon building blocks. Big shapes are side profiles extruded with a bevel;
@@ -2422,19 +2586,27 @@ function makeGripHand(o){
 
 // idle pose of the knife in the hand; the animations are offsets from this
 const KNIFE_BASE = {px:0.000, py:0.050, pz:-0.030, rx:0.45, ry:0.55, rz:-1.15};
-function buildKnife(){
+// the bayonet is longer and held further back, so it rides a little lower
+const M9_BASE    = {px:0.010, py:0.036, pz:-0.020, rx:0.40, ry:0.58, rz:-1.12};
+function buildKnife(def){
+  def = def || knifeDef(S.knife || 0);
   const g = new THREE.Group();
   const root = new THREE.Group();                  // the hand and everything it holds
-  const K = makeButterfly();
-  K.pin.scale.setScalar(1.40);
-  // right hand closed round the safe handle: palm on the right, fingers curling
-  // under and up the far side, thumb along the spine towards the pivot
-  const hand = makeGripHand({R:0.022, tube:0.0090, spacing:0.0192, z0:0.070, palm:-0.25, sweep:-3.5,
-                             sx:0.95, sy:1.28, thumb:{a:2.3, len:0.044, dir:-1, off:0.004}, arm:[0.30,-0.42,1]});
+  const K = makeKnifeModel(def);
+  const m9 = def.kind === 'm9';
+  K.pin.scale.setScalar(m9 ? 1.10 : 1.40);
+  // right hand closed round the grip: palm on the right, fingers curling under
+  // and up the far side, thumb along the spine towards the blade
+  const hand = m9
+    ? makeGripHand({R:0.026, tube:0.0094, spacing:0.0196, z0:0.052, palm:-0.25, sweep:-3.6,
+                    sx:0.95, sy:1.22, thumb:{a:2.3, len:0.046, dir:-1, off:0.004}, arm:[0.30,-0.42,1]})
+    : makeGripHand({R:0.022, tube:0.0090, spacing:0.0192, z0:0.070, palm:-0.25, sweep:-3.5,
+                    sx:0.95, sy:1.28, thumb:{a:2.3, len:0.044, dir:-1, off:0.004}, arm:[0.30,-0.42,1]});
   hand.position.z = 0;
   root.add(K.pin, hand);
-  root.position.set(KNIFE_BASE.px, KNIFE_BASE.py, KNIFE_BASE.pz);
-  root.rotation.set(KNIFE_BASE.rx, KNIFE_BASE.ry, KNIFE_BASE.rz);
+  const base = m9 ? M9_BASE : KNIFE_BASE;
+  root.position.set(base.px, base.py, base.pz);
+  root.rotation.set(base.rx, base.ry, base.rz);
   g.add(root);
   // the frame code expects these on every weapon
   const bolt = new THREE.Object3D(); g.add(bolt);
@@ -2442,7 +2614,7 @@ function buildKnife(){
   const dummy = new THREE.Mesh(new THREE.PlaneBufferGeometry(0.01,0.01), matFlash.clone());
   flash.add(dummy); g.add(flash);
   g.userData = {flash:flash, cone:dummy, star:dummy, bolt:bolt, boltZ:0, kind:'knife', lens:null, reticle:null,
-                knife:root, blade:K.blade, bite:K.bite, safe:K.safe, pin:K.pin, base:KNIFE_BASE};
+                knife:root, blade:K.blade, bite:K.bite, safe:K.safe, pin:K.pin, base:base, fixed:m9};
   return g;
 }
 
@@ -2670,6 +2842,22 @@ function buildGun(shape){
 function initVM(){
   vmScene.add(vm.group);
   WEAPONS.forEach(w=>{ const m = buildGun(w.shape); m.visible=false; vm.group.add(m); vm.models[w.key]=m; });
+}
+// picking another knife swaps the model in the hand; the geometry is thrown away
+// so eight knives never cost eight models' worth of memory
+function rebuildKnifeModel(){
+  const old = vm.models.knife;
+  if(!old) return;
+  const wasCurrent = vm.current === old;
+  vm.group.remove(old);
+  old.traverse(o=>{ if(o.geometry && o.geometry.dispose) o.geometry.dispose(); });
+  const m = buildKnife(knifeDef(S.knife));
+  m.visible = wasCurrent;
+  vm.group.add(m);
+  vm.models.knife = m;
+  if(wasCurrent) vm.current = m;
+  ARMS.knife.name = knifeDef(S.knife).name;
+  if(match.running) buildSlots();
 }
 function selectGunModel(i){
   if(!player.loadout.length) return;
@@ -3488,6 +3676,41 @@ function buildClassChips(){
   classNote();
 }
 function syncClassChips(){ buildClassChips(); }
+// The knives: one row for the knife itself, one for its finish, so eight
+// combinations stay two short rows rather than eight long chips.
+const KNIFE_DOT = ['#cdd3d9', '#35d38a', '#e2405c', '#4b8ef0'];
+const KNIFE_KINDS = ['Butterfly', 'M9 bayonet'];
+const FINISHES = ['Steel', 'Emerald', 'Ruby', 'Sapphire'];
+function setKnife(i){
+  S.knife = i;
+  localStorage_safe('verge.knife', String(i));
+  rebuildKnifeModel();
+  knifeNote();
+  if(Net.on) Net.sendKnife(i);                   // so everyone else sees the one you carry
+}
+function buildKnifeChips(){
+  chips('knifePick', KNIFE_KINDS, ()=>(S.knife/4)|0, k=>setKnife(k*4 + S.knife%4));
+  const h = el('finishPick'); h.innerHTML = '';
+  FINISHES.forEach((name, f)=>{
+    const b = document.createElement('button');
+    b.className = 'chip'; b.type = 'button';
+    b.innerHTML = '<i class="dot" style="background:' + KNIFE_DOT[f] + '"></i>' + name;
+    b.setAttribute('aria-pressed', S.knife % 4 === f ? 'true' : 'false');
+    b.onclick = ()=>{
+      setKnife(((S.knife/4)|0)*4 + f);
+      [...h.children].forEach((c, j)=>c.setAttribute('aria-pressed', j === f ? 'true' : 'false'));
+    };
+    h.appendChild(b);
+  });
+  knifeNote();
+}
+function knifeNote(){
+  const k = knifeDef(S.knife);
+  el('knifeNote').textContent = (k.kind === 'm9'
+    ? 'M9 bayonet: fixed blade with a sawback spine, and it twirls on inspect. '
+    : 'Butterfly: folds, flips open on the draw and fans on inspect. ')
+    + (k.finish === 'steel' ? 'Plain brushed steel.' : 'Gem-polished ' + k.finish + ' blade.');
+}
 function buildTicks(){
   const t = el('hpticks');
   if(t.children.length) return;
@@ -3794,6 +4017,7 @@ function wireNet(){
       if(r) r.safeUntil = nowSec() + (m.safe || SPAWN_SAFE);
       if(r && m.cls !== undefined && m.cls !== r.cls){ r.cls = m.cls; rebuildAvatar(r); }
     },
+    knifeChanged(r){ rebuildAvatar(r); },         // they swapped to another knife
     safeOver(m){                                  // they attacked, so they are fair game again
       if(m.id === Net.id) dropSafe(player);
       else dropSafe(Net.remote.get(m.id));
@@ -4274,21 +4498,28 @@ function animateKnife(u, dt){
   vm.stabT    = Math.max(0, vm.stabT    - dt/KNIFE_STAB);
   vm.inspectT = Math.max(0, vm.inspectT - dt/KNIFE_INSPECT);
   let px = B.px, py = B.py, pz = B.pz, rx = B.rx, ry = B.ry, rz = B.rz;
-  let blade = 0, bite = 0, tossY = 0, tossRoll = 0;
+  let blade = 0, bite = 0, tossY = 0, tossRoll = 0, spin = 0;
   const PI = Math.PI;
+  const fixed = !!u.fixed;                             // a bayonet has no moving halves
 
   if(vm.drawT > 0){
     const t = 1 - vm.drawT;                            // 0 -> 1
     // rise from below, closed, rolling in the fingers
     const up = easeOut(seg(t, 0, 0.30));
     py -= (1 - up) * 0.16; rx -= (1 - up) * 0.9; rz += (1 - up) * 1.2;
-    // closed: blade tucked between the handles
-    blade = PI;
-    // the flip: bite handle swings out over the top while the blade rolls through
     const f = seg(t, 0.22, 0.72);
-    bite  = -Math.sin(f * PI) * PI * 1.02;
-    blade = PI - easeIO(f) * PI * 3;                  // one and a half turns, lands open
-    // a flick of the wrist as it snaps shut on the hand, then a small settle
+    if(fixed){
+      // drawn from the belt: it comes up point-down and is spun round the hand once
+      spin = (1 - easeIO(f)) * PI * 2;
+      rx -= (1 - easeIO(f)) * 0.30;
+    } else {
+      // closed: blade tucked between the handles
+      blade = PI;
+      // the flip: bite handle swings out over the top while the blade rolls through
+      bite  = -Math.sin(f * PI) * PI * 1.02;
+      blade = PI - easeIO(f) * PI * 3;                // one and a half turns, lands open
+    }
+    // a flick of the wrist as it settles into the grip
     const snap = seg(t, 0.70, 1.0);
     rz += Math.sin(snap * PI) * 0.28; px += Math.sin(snap * PI) * 0.012;
     ry += Math.sin(f * PI) * 0.35;
@@ -4308,8 +4539,13 @@ function animateKnife(u, dt){
       let ci = 0; while(ci < 2 && f > bounds[ci+1]) ci++;
       const cf = (f - bounds[ci]) / (bounds[ci+1] - bounds[ci]);
       const e = easeIO(cf);
-      bite  = -e * PI * 2;
-      blade =  e * PI * 2 * (ci === 1 ? -1 : 1);
+      if(fixed){
+        // the bayonet twirls round the hand instead, alternating direction
+        spin = e * PI * 2 * (ci === 1 ? -1 : 1);
+      } else {
+        bite  = -e * PI * 2;
+        blade =  e * PI * 2 * (ci === 1 ? -1 : 1);
+      }
       rz += Math.sin(cf * PI) * (ci === 1 ? -0.45 : 0.45) * lift;
       rx += Math.sin(cf * PI) * 0.22 * lift;
       py += Math.sin(cf * PI) * 0.014;
@@ -4321,7 +4557,7 @@ function animateKnife(u, dt){
       const e = easeIO(aer), air = Math.sin(aer * PI);
       tossY = air * 0.055; tossRoll = -e * PI * 2;
       py += air * 0.012;
-      bite = -air * PI * 0.5;
+      if(fixed) spin = e * PI * 2; else bite = -air * PI * 0.5;
     }
   }
 
@@ -4357,9 +4593,9 @@ function animateKnife(u, dt){
 
   K.position.set(px, py, pz);
   K.rotation.set(rx, ry, rz);
-  u.blade.rotation.x = blade;
-  u.bite.rotation.x = bite;
-  if(u.pin){ u.pin.position.set(0, tossY, 0); u.pin.rotation.set(0, 0, tossRoll); }
+  if(u.blade) u.blade.rotation.x = blade;
+  if(u.bite)  u.bite.rotation.x = bite;
+  if(u.pin){ u.pin.position.set(0, tossY, 0); u.pin.rotation.set(spin, 0, tossRoll); }
 }
 
 /* ============================================================
@@ -4596,6 +4832,7 @@ function wireMenu(){
   modeNote();
   buildClassChips();
   classNote();
+  buildKnifeChips();
   chips('diffPick', DIFF.map(d=>d.name), ()=>S.diff, i=>{ S.diff=i; });
   chips('todPick', TOD.map(t=>t.name), ()=>S.tod,
     i=>{ S.tod=i; buildWorld(curMap || MAPS[0]); applyQuality(); });
@@ -4624,6 +4861,7 @@ function wireMenu(){
     const rm = party || 'main';
     if(Net.on && Net.name === nm && Net.room === rm){ Net.sendMode(MODE().key); return; }
     Net.disconnect();
+    Net.knife = S.knife | 0;                       // travels with the hello
     Net.connect({name:nm, room:rm, mode:MODE().key, cls:S.cls});
   }
   let reconnectTimer = 0;
@@ -4693,6 +4931,13 @@ function wireMenu(){
   } catch(e){}
   setParty(linkCode || localStorage_safe('verge.party') || newCode());
   muted = localStorage_safe('verge.muted') === '1';
+  const savedKnife = parseInt(localStorage_safe('verge.knife') || '0', 10);
+  if(savedKnife > 0 && savedKnife < KNIVES.length){    // the one you carried last time
+    S.knife = savedKnife;
+    ARMS.knife.name = knifeDef(S.knife).name;
+    rebuildKnifeModel();
+    buildKnifeChips();
+  }
   if(localStorage_safe('verge.fs') === '0'){ S.fullscreen = 0; chips('fsPick', ['Off','On'], ()=>S.fullscreen, i=>{ S.fullscreen=i; localStorage_safe('verge.fs', String(i)); }); }
   showMuteState(false);
   ensureConnected();

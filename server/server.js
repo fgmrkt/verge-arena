@@ -155,7 +155,8 @@ class Room {
       cls: this.mode.classes.includes(cls) ? cls : this.mode.classes[0],
       x:0, y:0, z:0, yaw:0, pitch:0, state:0,
       hp:100, alive:true, kills:0, deaths:0,
-      respawnAt:0, lastSeen: Date.now(), lastShot:0, lastHitBy:null, spawnedAt:0, safeUntil:0
+      respawnAt:0, lastSeen: Date.now(), lastShot:0, lastHitBy:null, spawnedAt:0, safeUntil:0,
+      knife:0,                         // which knife they carry; the server only relays it
     };
     this.players.set(p.id, p);
     this.respawn(p, true);
@@ -166,7 +167,7 @@ class Room {
       t:'welcome', id:p.id, room:this.name, ...this.matchInfo(),
       roster: this.roster()
     }));
-    this.broadcast({t:'join', id:p.id, name:p.name, cls:p.cls, bot:false}, p.id);
+    this.broadcast({t:'join', id:p.id, name:p.name, cls:p.cls, knife:p.knife || 0, bot:false}, p.id);
     return p;
   }
 
@@ -214,7 +215,7 @@ class Room {
 
   roster(){
     return this.everyone().map(e => ({
-      id:e.id, name:e.name, cls:e.cls, bot:!!e.bot,
+      id:e.id, name:e.name, cls:e.cls, bot:!!e.bot, knife:e.knife || 0,
       kills:e.kills, deaths:e.deaths, alive:e.alive
     }));
   }
@@ -772,6 +773,10 @@ wss.on('connection', (ws, req) => {
       clearTimeout(helloTimer);
       room = getRoom(roomName, modeKey);   // only now does the room need to exist
       me = room.add(ws, m.name, typeof m.cls === 'number' ? m.cls|0 : undefined);
+      if(typeof m.knife === 'number' && m.knife >= 0 && m.knife < 32){
+        me.knife = m.knife | 0;
+        room.broadcast({t:'knife', id:me.id, k:me.knife}, me.id);
+      }
       return;
     }
     if(!me) return;
@@ -796,6 +801,15 @@ wss.on('connection', (ws, req) => {
       case 'class':
         if(room.mode.classes.includes(m.cls|0)) me.cls = m.cls|0;
         break;
+
+      // purely cosmetic: which knife model everyone else should draw in their hands
+      case 'knife': {
+        const k = m.k | 0;
+        if(k < 0 || k > 31 || k === me.knife) break;
+        me.knife = k;
+        room.broadcast({t:'knife', id:me.id, k:k}, me.id);
+        break;
+      }
 
       case 'shot': {                      // "I fired, and I believe I hit these"
         if(!has(ARMS, m.w) || !me.alive || room.over) break;

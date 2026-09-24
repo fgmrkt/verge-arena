@@ -4,9 +4,9 @@
  * Net.* and reads Net.remote / Net.state; it never touches a WebSocket itself.
  *
  * What travels:
- *   up    hello, state (20/s), shot, class, mode, ping
+ *   up    hello, state (20/s), shot, class, knife, mode, ping
  *   down  welcome, join, leave, snap (15/s), fire, hurt, heal, kill, spawn,
- *         safeover, shove, match, end, pong
+ *         safeover, shove, knife, match, end, pong
  *
  * Your own movement is simulated locally and merely reported, so it never feels
  * laggy. Everyone else is interpolated between the last two snapshots, which
@@ -24,6 +24,7 @@ const Net = {
   ping: 0,
   remote: new Map(),    // id -> {id,name,cls,bot,x,y,z,yaw,alive,hp,kills,deaths, px,pz,py,pyaw,t0,t1}
   match: null,          // {mode,label,map,mapName,target,time,classes}
+  knife: 0,             // which knife this player carries (cosmetic only)
   handlers: {},         // game supplies these
   lastSent: 0,
   sendHz: 20
@@ -91,7 +92,7 @@ function open(base, mode, cls){
   // every handler checks it still belongs to the current socket
   sock.onopen = () => {
     if(sock !== ws) return;
-    sock.send(JSON.stringify({t:'hello', name:Net.name, cls:cls}));
+    sock.send(JSON.stringify({t:'hello', name:Net.name, cls:cls, knife:Net.knife|0}));
   };
   sock.onmessage = ev => {
     if(sock !== ws) return;
@@ -186,6 +187,10 @@ function handle(m){
     case 'safeover':
       { const r = Net.remote.get(m.id); if(r) r.safeUntil = 0; }
       emit('safeOver', m); break;
+
+    case 'knife':
+      { const r = Net.remote.get(m.id); if(r && r.knife !== (m.k|0)){ r.knife = m.k|0; emit('knifeChanged', r); } }
+      break;
     case 'shove':  emit('shove', m); break;
     case 'end':
       if(Net.match){ Net.match.over = true; Net.match.nextAt = performance.now() + (m.next || 8)*1000; }
@@ -199,7 +204,7 @@ function handle(m){
 
 function addRemote(info){
   const r = {
-    id: info.id, name: info.name || '?', cls: info.cls || 0, bot: !!info.bot,
+    id: info.id, name: info.name || '?', cls: info.cls || 0, bot: !!info.bot, knife: info.knife || 0,
     x:0, y:0, z:0, yaw:0, alive: info.alive !== false, hp: info.hp === undefined ? 100 : info.hp,
     kills: info.kills || 0, deaths: info.deaths || 0, state:0,
     px:0, py:0, pz:0, pyaw:0, t0:undefined, t1:0, avatar:null
@@ -254,6 +259,11 @@ Net.interpolate = function(){
 Net.sendShot = function(weaponKey, hits){
   if(!Net.on || !ws || ws.readyState !== 1) return;
   ws.send(JSON.stringify({t:'shot', w:weaponKey, hits:hits}));
+};
+Net.sendKnife = function(k){
+  Net.knife = k | 0;                                   // remembered for the next hello
+  if(!Net.on || !ws || ws.readyState !== 1) return;
+  ws.send(JSON.stringify({t:'knife', k:Net.knife}));
 };
 Net.sendClass = function(cls){
   if(!Net.on || !ws || ws.readyState !== 1) return;
