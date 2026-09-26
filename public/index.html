@@ -2063,25 +2063,32 @@ function knifeEnvMap(){
 // Profile coordinates: x runs forward from the pivot, y is up. Model space is
 // x -> forward (-z), y -> up, thickness -> x.
 const BLADE = (function(){
-  const N = 36, tip = [0.172, 0.0035];
+  // An upswept bowie, the shape a balisong actually carries: the spine climbs
+  // away from the pivot, the belly sweeps up to meet it, and the point sits high
+  // with a long concave clip above it.
+  const N = 36, tip = [0.184, 0.0206];
   const q = (a, c, b, t)=>[ (1-t)*(1-t)*a[0] + 2*t*(1-t)*c[0] + t*t*b[0],
                             (1-t)*(1-t)*a[1] + 2*t*(1-t)*c[1] + t*t*b[1] ];
-  // cutting edge: straight from the plunge, then the belly sweeps up into the point
-  const E = [], NS = 12;
-  for(let i=0;i<=NS;i++){ const t=i/NS; E.push([0.026 + (0.106-0.026)*t, -0.0150 + 0.0004*t]); }
-  for(let i=1;i<=N-NS;i++) E.push(q([0.106,-0.0146], [0.160,-0.0140], tip, i/(N-NS)));
-  // grind line: runs from the top of the plunge straight into the point
-  const g0 = [0.031, -0.0012], G = E.map((p,i)=>{
+  // cutting edge: a short straight run out of the plunge, then a long belly
+  const E = [], NS = 9;
+  for(let i=0;i<=NS;i++){ const t = i/NS; E.push([0.026 + (0.082-0.026)*t, -0.0152 - 0.0008*t]); }
+  for(let i=1;i<=N-NS;i++) E.push(q([0.082,-0.0160], [0.156,-0.0112], tip, i/(N-NS)));
+  // grind line: follows the edge a third of the way up the blade
+  const g0 = [0.032, -0.0010], G = E.map((p,i)=>{
     if(i === 0) return g0.slice();
-    const x = p[0], y = g0[1] + (x - g0[0]) * (tip[1] - g0[1]) / (tip[0] - g0[0]);
-    return [x, Math.max(y, p[1])];
+    const t = i/N;
+    const x = p[0], y = g0[1] + (tip[1] - g0[1]) * Math.pow(t, 1.35);
+    return [x, Math.max(y, p[1] + 0.0016)];
   });
   G[N] = tip.slice();
-  // clip: the spine dips gently down to the point; the swedge sits just under it
+  // spine and the clip above it: the swedge runs most of the blade's length
   const C = [], W = [];
-  for(let i=0;i<=24;i++){
-    const t = i/24, c = q([0.098, 0.0138], [0.142, 0.0074], tip, t);
-    const off = 0.0046 * Math.sqrt(t) * Math.pow(1-t, 1.2) * 2.2;
+  for(let i=0;i<=26;i++){
+    const t = i/26;
+    const c = t < 0.42
+      ? q([0.020, 0.0128], [0.070, 0.0210], [0.112, 0.0268], t/0.42)     // spine, rising
+      : q([0.112, 0.0268], [0.156, 0.0222], tip, (t-0.42)/0.58);         // clip, hollowed into a fine point
+    const off = 0.0060 * Math.sqrt(Math.max(0, (t-0.10)/0.90)) * Math.pow(1-t, 0.9) * 1.9;
     C.push(c); W.push([c[0], c[1] - off]);
   }
   return {E, G, C, W, tip, T:0.0044};
@@ -2091,8 +2098,8 @@ function bladeFlatShape(){
   s.moveTo(B.G[0][0], B.G[0][1]);
   for(let i=1;i<B.G.length;i++) s.lineTo(B.G[i][0], B.G[i][1]);
   for(let i=B.W.length-2;i>=0;i--) s.lineTo(B.W[i][0], B.W[i][1]);
-  s.lineTo(0.016, 0.0138);                                           // spine
-  s.quadraticCurveTo(0.006, 0.0140, 0.0, 0.0128);                    // into the tang
+  s.lineTo(0.020, 0.0128);                                           // spine root
+  s.quadraticCurveTo(0.008, 0.0134, 0.0, 0.0128);                    // into the tang
   s.absarc(0, 0, 0.0128, Math.PI/2, Math.PI*1.36, false);            // round the pivot
   s.lineTo(0.004, -0.0166);                                          // kicker
   s.quadraticCurveTo(0.010, -0.0170, 0.015, -0.0152);
@@ -2127,30 +2134,55 @@ function taperStrip(A, B, hA, hB){
   g.computeVertexNormals();
   return g;
 }
-// Channel handle: slight hourglass so it reads as shaped, a rounded head round
-// the pivot, three tapering windows and a lanyard hole.
+// Channel handle, curved the way a balisong's is: it sweeps down away from the
+// pivot so that closed, it follows the belly of the blade. A window down the
+// middle carries the pale inlay panel.
+function handleCurve(){
+  // centreline of the handle, from the pivot back to the butt
+  const q = (a, c, b, t)=>[ (1-t)*(1-t)*a[0] + 2*t*(1-t)*c[0] + t*t*b[0],
+                            (1-t)*(1-t)*a[1] + 2*t*(1-t)*c[1] + t*t*b[1] ];
+  const pts = [];
+  for(let i=0;i<=16;i++) pts.push(q([0, 0], [-0.064, -0.002], [-0.128, -0.0185], i/16));
+  return pts;
+}
+function handleOutline(inset){
+  // an outline that follows the curve, half-height above and below
+  const c = handleCurve(), s = [];
+  const H = 0.0132 - (inset || 0);
+  for(let i=0;i<c.length;i++) s.push([c[i][0], c[i][1] + H]);
+  for(let i=c.length-1;i>=0;i--) s.push([c[i][0], c[i][1] - H]);
+  return s;
+}
 function handleShape(){
-  const s = new THREE.Shape(), L = 0.126;
-  s.moveTo(0, 0.0132);
-  s.quadraticCurveTo(-0.058, 0.0112, -L+0.010, 0.0128);
-  s.quadraticCurveTo(-L, 0.0130, -L, 0.0112);
-  s.lineTo(-L, -0.0112);
-  s.quadraticCurveTo(-L, -0.0130, -L+0.010, -0.0128);
-  s.quadraticCurveTo(-0.058, -0.0112, 0, -0.0132);
-  s.absarc(0, 0, 0.0132, -Math.PI/2, Math.PI/2, false);
-  const slot = (x0, x1, h0, h1)=>{
-    const p = new THREE.Path();
-    p.moveTo(x0, h0); p.lineTo(x1, h1);
-    p.absarc(x1, 0, h1, Math.PI/2, -Math.PI/2, true);
-    p.lineTo(x0, -h0);
-    p.absarc(x0, 0, h0, -Math.PI/2, Math.PI/2, true);
-    s.holes.push(p);
-  };
-  slot(-0.021, -0.043, 0.0046, 0.0041);
-  slot(-0.050, -0.071, 0.0040, 0.0036);
-  slot(-0.078, -0.096, 0.0035, 0.0031);
-  const lan = new THREE.Path(); lan.absarc(-0.1175, 0, 0.0026, 0, Math.PI*2, true); s.holes.push(lan);
-  const pin = new THREE.Path(); pin.absarc(0, 0, 0.0026, 0, Math.PI*2, true); s.holes.push(pin);
+  const o = handleOutline(0), s = new THREE.Shape();
+  s.moveTo(o[0][0], o[0][1]);
+  for(let i=1;i<o.length;i++) s.lineTo(o[i][0], o[i][1]);
+  s.absarc(0, 0, 0.0132, -Math.PI/2, Math.PI/2, false);       // rounded head round the pivot
+  // the window the inlay sits in
+  const c = handleCurve(), win = new THREE.Path();
+  const top = [], bot = [];
+  for(let i=2;i<c.length-1;i++){
+    const t = (i-2)/(c.length-4), h = 0.0082 * (1 - 0.22*t);
+    top.push([c[i][0], c[i][1] + h]); bot.push([c[i][0], c[i][1] - h]);
+  }
+  win.moveTo(top[0][0], top[0][1]);
+  for(let i=1;i<top.length;i++) win.lineTo(top[i][0], top[i][1]);
+  for(let i=bot.length-1;i>=0;i--) win.lineTo(bot[i][0], bot[i][1]);
+  s.holes.push(win);
+  const pin = new THREE.Path(); pin.absarc(0, 0, 0.0026, 0, Math.PI*2, true);
+  s.holes.push(pin);
+  return s;
+}
+// the pale panel behind the window, a shade proud of the frame
+function inlayShape(){
+  const c = handleCurve(), s = new THREE.Shape(), top = [], bot = [];
+  for(let i=2;i<c.length-1;i++){
+    const t = (i-2)/(c.length-4), h = 0.0094 * (1 - 0.20*t);
+    top.push([c[i][0], c[i][1] + h]); bot.push([c[i][0], c[i][1] - h]);
+  }
+  s.moveTo(top[0][0], top[0][1]);
+  for(let i=1;i<top.length;i++) s.lineTo(top[i][0], top[i][1]);
+  for(let i=bot.length-1;i>=0;i--) s.lineTo(bot[i][0], bot[i][1]);
   return s;
 }
 // Studio lighting baked into a prefiltered environment: a big softbox above, two
@@ -2259,6 +2291,7 @@ function knifeMaterials(finish){
     M.pin    = S({color:0xd2d7dc, metalness:1.0, roughness:0.20});
     M.socket = S({color:0x0b0c0e, metalness:0.3, roughness:0.7});
     M.grip   = S({color:0x1a1d22, metalness:0.2, roughness:0.72});                                  // moulded handle
+    M.inlay  = S({color:0xcfc8b4, metalness:0.15, roughness:0.52});                                 // pale handle panel
     M.accent = S({color:F.gem ? F.blade : 0xc8354c, metalness:0.7, roughness:0.3});
   } else {
     const cube = knifeEnvMap();
@@ -2271,6 +2304,7 @@ function knifeMaterials(finish){
     M.pin = P(0xb8bec5, 0xffffff, 120, 0.5);
     M.socket = P(0x0b0c0e, 0x222222, 10, 0);
     M.grip = P(0x1a1d22, 0x24282d, 12, 0);
+    M.inlay = P(0xcfc8b4, 0x6a6558, 18, 0);
     M.accent = P(F.gem ? F.blade : 0xc8354c, 0x662222, 40, 0);
   }
   M.glove = new THREE.MeshPhongMaterial({color:0x24282e, specular:0x30353b, shininess:14});
@@ -2306,25 +2340,29 @@ function makeButterfly(finish){
     const g = new THREE.Group();
     const plate = new THREE.Mesh(extrudeProfile(handleShape(), HT, 0.0011, 3), M.handle);
     plate.position.x = side * off; g.add(plate);
+    // the pale panel sits in the window, a shade below the frame's face
+    const inlay = new THREE.Mesh(extrudeProfile(inlayShape(), HT * 0.62, 0.0004, 2), M.inlay);
+    inlay.position.x = side * off; g.add(inlay);
     // spacer rail along the bottom turns the plate into a channel
-    const rail = new THREE.CylinderBufferGeometry(0.0013, 0.0013, 0.090, 10); rail.rotateX(Math.PI/2);
-    const r = new THREE.Mesh(rail, M.spacer); r.position.set(side*(h + 0.0010), -0.0104, 0.066); g.add(r);
+    const rail = new THREE.CylinderBufferGeometry(0.0013, 0.0013, 0.086, 10); rail.rotateX(Math.PI/2);
+    const r = new THREE.Mesh(rail, M.spacer); r.position.set(side*(h + 0.0010), -0.0128, 0.064);
+    r.rotation.x = -0.14; g.add(r);
     // pivot and end screws: a chamfered head with a dark driver socket
-    const head = (rad, z)=>{
+    const head = (rad, z, u)=>{
       const sg = new THREE.CylinderBufferGeometry(rad*0.84, rad, 0.0016, 20); sg.rotateZ(-side*Math.PI/2);
-      const m = new THREE.Mesh(sg, M.pin); m.position.set(side*(off + HT/2 + 0.0017), 0, z); g.add(m);
+      const m = new THREE.Mesh(sg, M.pin); m.position.set(side*(off + HT/2 + 0.0017), u || 0, z); g.add(m);
       const kg = new THREE.CylinderBufferGeometry(rad*0.38, rad*0.38, 0.0004, 6); kg.rotateZ(Math.PI/2);
-      const k = new THREE.Mesh(kg, M.socket); k.position.set(side*(off + HT/2 + 0.0026), 0, z); g.add(k);
+      const k = new THREE.Mesh(kg, M.socket); k.position.set(side*(off + HT/2 + 0.0026), u || 0, z); g.add(k);
     };
-    head(0.0046, 0); head(0.0034, 0.1085);
+    head(0.0046, 0, 0); head(0.0034, 0.1140, -0.0150);
     return g;
   };
   const safe = handle(-1), bite = handle(1);
   // latch: a flat bar pinned at the butt of the bite handle
   const latch = new THREE.Mesh(new THREE.BoxBufferGeometry(0.0020, 0.0026, 0.026), M.pin);
-  latch.position.set(0.0010, -0.0118, 0.106); bite.add(latch);
+  latch.position.set(0.0010, -0.0210, 0.102); latch.rotation.x = -0.13; bite.add(latch);
   const lp = new THREE.CylinderBufferGeometry(0.0018, 0.0018, 0.0034, 12); lp.rotateZ(Math.PI/2);
-  const lpm = new THREE.Mesh(lp, M.pin); lpm.position.set(0.0010, -0.0118, 0.118); bite.add(lpm);
+  const lpm = new THREE.Mesh(lp, M.pin); lpm.position.set(0.0010, -0.0240, 0.114); bite.add(lpm);
   pin.add(safe, bite);
   return {pin, blade, safe, bite};
 }
@@ -2334,13 +2372,13 @@ function makeButterfly(finish){
 // ending in a steel pommel. Same profile machinery as the butterfly's blade.
 // ---------------------------------------------------------------------------
 const M9BLADE = (function(){
-  const N = 36, tip = [0.186, 0.0045];
+  const N = 36, tip = [0.196, 0.0072];
   const q = (a, c, b, t)=>[ (1-t)*(1-t)*a[0] + 2*t*(1-t)*c[0] + t*t*b[0],
                             (1-t)*(1-t)*a[1] + 2*t*(1-t)*c[1] + t*t*b[1] ];
-  const E = [], NS = 12;
-  for(let i=0;i<=NS;i++){ const t = i/NS; E.push([0.022 + (0.118-0.022)*t, -0.0188 + 0.0006*t]); }
-  for(let i=1;i<=N-NS;i++) E.push(q([0.118,-0.0182], [0.176,-0.0158], tip, i/(N-NS)));
-  const g0 = [0.028, -0.0020], G = E.map((p,i)=>{
+  const E = [], NS = 13;
+  for(let i=0;i<=NS;i++){ const t = i/NS; E.push([0.024 + (0.128-0.024)*t, -0.0150 + 0.0005*t]); }
+  for(let i=1;i<=N-NS;i++) E.push(q([0.128,-0.0145], [0.178,-0.0108], tip, i/(N-NS)));
+  const g0 = [0.030, -0.0030], G = E.map((p,i)=>{
     if(i === 0) return g0.slice();
     const x = p[0], y = g0[1] + (x - g0[0]) * (tip[1] - g0[1]) / (tip[0] - g0[0]);
     return [x, Math.max(y, p[1])];
@@ -2348,8 +2386,8 @@ const M9BLADE = (function(){
   G[N] = tip.slice();
   const C = [], W = [];
   for(let i=0;i<=24;i++){
-    const t = i/24, c = q([0.116, 0.0216], [0.158, 0.0122], tip, t);
-    const off = 0.0060 * Math.sqrt(t) * Math.pow(1-t, 1.15) * 2.2;
+    const t = i/24, c = q([0.120, 0.0166], [0.164, 0.0126], tip, t);
+    const off = 0.0050 * Math.sqrt(t) * Math.pow(1-t, 1.1) * 2.2;
     C.push(c); W.push([c[0], c[1] - off]);
   }
   return {E, G, C, W, tip, T:0.0050};
@@ -2359,22 +2397,27 @@ function m9FlatShape(){
   s.moveTo(B.G[0][0], B.G[0][1]);
   for(let i=1;i<B.G.length;i++) s.lineTo(B.G[i][0], B.G[i][1]);
   for(let i=B.W.length-2;i>=0;i--) s.lineTo(B.W[i][0], B.W[i][1]);
-  // sawback: eleven teeth cut into the spine, running back towards the guard
-  const x0 = 0.1005, x1 = 0.0385, teeth = 11, step = (x0 - x1)/teeth;
-  s.lineTo(x0, 0.0216);
+  // sawback: square teeth raked back towards the guard, the way a bayonet's are
+  const x0 = 0.1080, x1 = 0.0420, teeth = 10, step = (x0 - x1)/teeth, deep = 0.0052;
+  s.lineTo(x0, 0.0166);
   for(let i=0;i<teeth;i++){
     const a = x0 - i*step;
-    s.lineTo(a - step*0.45, 0.0216 - 0.0042);      // down into the gullet
-    s.lineTo(a - step, 0.0216);                    // and back up to the point
+    s.lineTo(a - step*0.16, 0.0166 - deep);          // straight down the face of the tooth
+    s.lineTo(a - step*0.80, 0.0166 - deep);          // along the gullet
+    s.lineTo(a - step,      0.0166);                 // and up the rake to the next point
   }
-  s.lineTo(0.0300, 0.0216);
-  s.lineTo(0.0300, 0.0150);
-  s.lineTo(0.0080, 0.0150);                        // tang, running back into the guard
-  s.lineTo(0.0080, -0.0120);
-  s.lineTo(0.0300, -0.0120);
-  s.lineTo(0.0300, -0.0188);
+  s.lineTo(0.0300, 0.0166);
+  s.lineTo(0.0300, 0.0120);
+  s.lineTo(0.0080, 0.0120);                          // tang, running back into the guard
+  s.lineTo(0.0080, -0.0105);
+  s.lineTo(0.0300, -0.0105);
+  s.lineTo(0.0300, -0.0150);
   s.lineTo(B.E[0][0], B.E[0][1]);
-  s.quadraticCurveTo(0.0245, -0.0070, B.G[0][0], B.G[0][1]);   // plunge line
+  s.quadraticCurveTo(0.0255, -0.0060, B.G[0][0], B.G[0][1]);   // plunge line
+  // the hole through the blade, just ahead of the teeth
+  const hole = new THREE.Path();
+  hole.absellipse(0.1245, 0.0068, 0.0072, 0.0034, 0, Math.PI*2, true);
+  s.holes.push(hole);
   return s;
 }
 function makeM9(finish){
@@ -2387,21 +2430,22 @@ function makeM9(finish){
   blade.add(new THREE.Mesh(taperStrip(B.C, B.W, 0.00055, h), M.edge));       // swedge
   pin.add(blade);
 
-  // crossguard, with the ring the bayonet mounts through
+  // crossguard: a short bar across the blade, with the mounting ring standing
+  // proud of it on the spine side
   const guard = new THREE.Shape();
-  guard.moveTo(-0.0075, -0.0170);
-  guard.quadraticCurveTo(-0.0075, -0.0290, 0.0060, -0.0300);   // quillon, swept down and forward
-  guard.quadraticCurveTo(0.0135, -0.0300, 0.0125, -0.0225);
-  guard.lineTo(0.0110, -0.0150);
-  guard.lineTo(0.0110, 0.0210);
-  guard.quadraticCurveTo(0.0110, 0.0262, 0.0055, 0.0262);      // the ring boss on top
-  guard.quadraticCurveTo(-0.0075, 0.0262, -0.0075, 0.0205);
-  guard.lineTo(-0.0075, -0.0170);
-  const ring = new THREE.Path(); ring.absarc(0.0018, 0.0188, 0.0050, 0, Math.PI*2, true);
-  guard.holes.push(ring);
-  const gm = new THREE.Mesh(extrudeProfile(guard, 0.0132, 0.0010, 3), M.handle);
+  guard.moveTo(-0.0056, -0.0165);
+  guard.quadraticCurveTo(-0.0056, -0.0262, 0.0026, -0.0268);     // quillon, swept forward
+  guard.quadraticCurveTo(0.0100, -0.0268, 0.0094, -0.0190);
+  guard.lineTo(0.0094, 0.0175);
+  guard.quadraticCurveTo(0.0094, 0.0228, 0.0030, 0.0228);
+  guard.quadraticCurveTo(-0.0056, 0.0228, -0.0056, 0.0175);
+  guard.lineTo(-0.0056, -0.0165);
+  const gm = new THREE.Mesh(extrudeProfile(guard, 0.0118, 0.0010, 3), M.handle);
   pin.add(gm);
-
+  const ringG = new THREE.TorusBufferGeometry(0.0082, 0.0024, 10, 22);
+  ringG.rotateY(Math.PI/2);                                      // stand it in the blade's plane
+  const ringM = new THREE.Mesh(ringG, M.handle);
+  ringM.position.set(0, 0.0290, -0.0020); pin.add(ringM);
   // grip: a ribbed barrel behind the guard, with a steel pommel on the end
   const grip = new THREE.Group();
   const body = new THREE.CylinderBufferGeometry(0.0128, 0.0116, 0.100, 20);
