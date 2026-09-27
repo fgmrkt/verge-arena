@@ -695,9 +695,9 @@ function MODE(){ return MODES[S.mode]; }
 function pickList(){ return MODE().classes; }
 const TOD = [
   {name:'Day',   night:0.0,
-   skyTop:0x5b8fc4, skyBot:0xe8eef2, fog:0xdbe3ea, fogMul:1.00, exposure:1.18,
-   sun:[0xfff1d6,1.05], hemi:[0xcfe2f2,0x676c74,0.58], fill:[0x9fb6cc,0.30],
-   sunDir:[0.52,0.80,0.30], stars:0, clouds:0.55},
+   skyTop:0x5b8fc4, skyBot:0xe8eef2, fog:0xdbe3ea, fogMul:1.00, exposure:1.10,
+   sun:[0xffeccc,1.24], hemi:[0xc4dcf2,0x72695e,0.50], fill:[0x9fb6cc,0.22],
+   sunDir:[0.58,0.68,0.40], stars:0, clouds:0.55},
   {name:'Dusk',  night:0.55,
    skyTop:0x2d3f6b, skyBot:0xe0834a, fog:0xa87a6a, fogMul:0.80, exposure:1.36,
    sun:[0xff9d55,0.78], hemi:[0x7584b0,0x4a3a34,0.56], fill:[0x8a6ea8,0.30],
@@ -824,7 +824,7 @@ function shadeBox(g, floor){
     const t=(pos.getY(i)/g.parameters.height)+0.5;      // 0 at base, 1 at top
     let v = (floor===undefined?0.70:floor) + t*0.30;
     if(ny>0.5) v = 1.08;                                 // tops catch the sun
-    else if(ny<-0.5) v = 0.48;                           // undersides sit dark
+    else if(ny<-0.5) v = 0.62;                           // undersides: shade, lifted by light off the street
     else if(Math.abs(nx)>0.5) v *= 0.93;                 // side walls a touch cooler
     col[i*3]=col[i*3+1]=col[i*3+2]=v;
   }
@@ -858,6 +858,59 @@ function glowTexture(){
   g.fillStyle = rg; g.fillRect(0,0,128,128);
   glowTex = new THREE.CanvasTexture(c);
   return glowTex;
+}
+// soft dark square for contact shadows: black, all in the alpha
+let aoTex = null;
+function aoTexture(){
+  if(aoTex) return aoTex;
+  const N = 64, c = document.createElement('canvas'); c.width = c.height = N;
+  const g = c.getContext('2d'), img = g.createImageData(N, N);
+  for(let y=0;y<N;y++) for(let x=0;x<N;x++){
+    const u = Math.abs((x + 0.5)/N*2 - 1), v = Math.abs((y + 0.5)/N*2 - 1);
+    const d = Math.max(0, Math.hypot(Math.max(0, u - 0.45), Math.max(0, v - 0.45)) / 0.55);
+    const a = Math.pow(Math.max(0, 1 - d), 1.8);
+    const i = (y*N + x)*4; img.data[i] = img.data[i+1] = img.data[i+2] = 255; img.data[i+3] = Math.round(a*255);
+  }
+  g.putImageData(img, 0, 0);
+  aoTex = new THREE.CanvasTexture(c);
+  return aoTex;
+}
+let aoRoundTex = null;
+function aoRoundTexture(){
+  if(aoRoundTex) return aoRoundTex;
+  const N = 64, c = document.createElement('canvas'); c.width = c.height = N;
+  const g = c.getContext('2d'), img = g.createImageData(N, N);
+  for(let y=0;y<N;y++) for(let x=0;x<N;x++){
+    const d = Math.hypot((x + 0.5)/N*2 - 1, (y + 0.5)/N*2 - 1);
+    const a = Math.pow(Math.max(0, 1 - d), 1.6);
+    const i = (y*N + x)*4; img.data[i] = img.data[i+1] = img.data[i+2] = 255; img.data[i+3] = Math.round(a*255);
+  }
+  g.putImageData(img, 0, 0);
+  aoRoundTex = new THREE.CanvasTexture(c);
+  return aoRoundTex;
+}
+// a tree pit: dark soil behind a cast-iron grille, set into the pavement
+let pitTex = null;
+function pitTexture(){
+  if(pitTex) return pitTex;
+  const N = 256, c = document.createElement('canvas'); c.width = c.height = N;
+  const g = c.getContext('2d');
+  g.fillStyle = '#8f8d88'; g.fillRect(0, 0, N, N);                        // kerb all round
+  g.fillStyle = '#7d7b76'; g.fillRect(0, N-6, N, 6); g.fillRect(N-6, 0, 6, N);
+  g.fillStyle = '#76746f'; g.fillRect(22, 22, N-44, N-44);               // paving
+  g.strokeStyle = '#5f5d59'; g.lineWidth = 2;
+  for(let k=1;k<4;k++){ const t = 22 + k*(N-44)/4; g.beginPath(); g.moveTo(t, 22); g.lineTo(t, N-22); g.stroke();
+                        g.beginPath(); g.moveTo(22, t); g.lineTo(N-22, t); g.stroke(); }
+  const G = 70;                                                          // the grille, 1.4 m of a 2.6 m square
+  g.fillStyle = '#3a3a3c'; g.fillRect(N/2-G, N/2-G, G*2, G*2);
+  g.fillStyle = '#2a211b'; g.fillRect(N/2-G+6, N/2-G+6, G*2-12, G*2-12);
+  g.strokeStyle = '#4a4a4d'; g.lineWidth = 4;
+  for(let r=1;r<=5;r++){ g.beginPath(); g.arc(N/2, N/2, r*12, 0, Math.PI*2); g.stroke(); }
+  for(let k=0;k<12;k++){ const a = k/12*Math.PI*2; g.beginPath(); g.moveTo(N/2 + Math.cos(a)*12, N/2 + Math.sin(a)*12);
+                         g.lineTo(N/2 + Math.cos(a)*(G-4), N/2 + Math.sin(a)*(G-4)); g.stroke(); }
+  g.fillStyle = '#1c1714'; g.beginPath(); g.arc(N/2, N/2, 11, 0, Math.PI*2); g.fill();
+  pitTex = new THREE.CanvasTexture(c);
+  return pitTex;
 }
 function makeStars(amount){
   const n = 520, arr = new Float32Array(n*3);
@@ -961,64 +1014,125 @@ float fnoise(vec2 p){
   return mix(mix(fh(i),fh(i+vec2(1,0)),f.x), mix(fh(i+vec2(0,1)),fh(i+vec2(1,1)),f.x), f.y);
 }`;
 
-function facadeMaterial(baseHex, night, moss){
+// the clock the water ripples on; the frame loop moves it
+const WATER_T = {value:0};
+// uniforms every surface shader shares, set per map and time of day in buildWorld
+const FACADE_U = {
+  uSkyTop:{value:new THREE.Color(0x5b8fc4)}, uSkyBot:{value:new THREE.Color(0xe8eef2)},
+  uSunDir:{value:new V3(0.52, 0.80, 0.30).normalize()}, uSunCol:{value:new THREE.Color(0xfff1d6)},
+  uGroundY:{value:0}
+};
+const GLSL_SURF = `
+uniform vec3 uSkyTop; uniform vec3 uSkyBot; uniform vec3 uSunDir; uniform vec3 uSunCol; uniform float uGroundY;
+float pxw = 0.001;
+// 1 while a pattern of this period (metres) spans a few pixels, fading to 0 before it shimmers
+float det(float period){ return smoothstep(1.5, 4.0, period / max(pxw, 1e-5)); }
+// what a mirror-like surface shows: sky above, the street and the buildings opposite
+// below the horizon, a band of far rooftops on it, and the sun as a hard glint
+vec3 skyRefl(vec3 R){
+  float h = R.y;
+  vec3 sky = mix(uSkyBot, uSkyTop, smoothstep(0.0, 0.7, h));
+  vec3 below = mix(uSkyBot*0.30, uSkyBot*0.58, smoothstep(-0.5, 0.0, h));
+  vec3 c = mix(below, sky, smoothstep(-0.02, 0.04, h));
+  c = mix(c, uSkyBot*0.52, (1.0 - smoothstep(0.0, 0.12, h)) * smoothstep(-0.03, 0.0, h) * 0.8);
+  float sd = max(dot(R, uSunDir), 0.0);
+  c += uSunCol * (pow(sd, 500.0)*7.0 + pow(sd, 40.0)*0.22);
+  return c;
+}
+float fresnel(vec3 N, vec3 V, float f0){ return f0 + (1.0 - f0)*pow(1.0 - clamp(dot(N, V), 0.0, 1.0), 5.0); }
+// surface relief without a normal map: how much brighter or darker a bump tilted to Np
+// would look in the sun than the flat face N does. Only where the sun reaches the face.
+float relief(vec3 N, vec3 Np){
+  float l0 = dot(N, uSunDir), l1 = dot(Np, uSunDir);
+  return 1.0 + clamp(l1 - l0, -0.6, 0.6) * 0.85 * smoothstep(-0.05, 0.25, l0) * (1.0 - 0.65*uNight);
+}
+`;
+
+// Only the surfaces a mesh actually carries are compiled into its shader: a lamp post
+// never runs the window code, a tree never runs the car paint.
+function facadeMaterial(baseHex, night, moss, slab, ivy, styles){
   const mat = new THREE.MeshLambertMaterial({color:baseHex, vertexColors:true});
+  mat.extensions = {derivatives:true};
+  const st = styles ? Array.from(styles).map(v=>Math.round(v)) : [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14];
+  let defs = st.map(v=>'#define S' + v + '\n').join('');
+  if(st.some(v=>v >= 1 && v <= 4)) defs += '#define SB\n';
+  if(slab) defs += '#define SLAB\n';
+  if(ivy) defs += '#define IVY\n';
+  const key = 'facade|' + defs.replace(/\n/g, ' ');
+  mat.customProgramCacheKey = ()=>key;
   mat.onBeforeCompile = sh => {
     sh.uniforms.uNight = {value: night};
     sh.uniforms.uMoss = {value: moss || 0};
+    sh.uniforms.uSlab = {value: slab ? 1 : 0};
+    sh.uniforms.uIvy = {value: ivy ? 1 : 0};
+    sh.uniforms.uTimeW = WATER_T;
+    Object.assign(sh.uniforms, FACADE_U);
     sh.vertexShader = `
       attribute vec4 aFa; attribute vec4 aFb;
-      varying vec3 vWp; varying vec3 vNw; varying vec4 vFa; varying vec4 vFb;
+      varying vec3 vWp; varying vec3 vNw; varying vec4 vFa; varying vec4 vFb; varying vec3 vLp; varying vec3 vLn;
     ` + sh.vertexShader.replace('#include <begin_vertex>', `
       #include <begin_vertex>
       {
         #ifdef USE_INSTANCING
           vec4 wp = modelMatrix * instanceMatrix * vec4(transformed, 1.0);
-          vNw = normalize(mat3(instanceMatrix) * objectNormal);
+          mat3 im3 = mat3(instanceMatrix);
+          vec3 on = objectNormal / vec3(dot(im3[0], im3[0]), dot(im3[1], im3[1]), dot(im3[2], im3[2]));
+          vNw = normalize(mat3(modelMatrix) * (im3 * on));
         #else
           vec4 wp = modelMatrix * vec4(transformed, 1.0);
           vNw = normalize(mat3(modelMatrix) * objectNormal);
         #endif
-        vWp = wp.xyz; vFa = aFa; vFb = aFb;
+        vWp = wp.xyz; vFa = aFa; vFb = aFb; vLp = position; vLn = objectNormal;
       }`);
-    sh.fragmentShader = `
-      uniform float uNight; uniform float uMoss;
-      varying vec3 vWp; varying vec3 vNw; varying vec4 vFa; varying vec4 vFb;
+    sh.fragmentShader = defs + `
+      uniform float uNight; uniform float uMoss; uniform float uSlab; uniform float uIvy; uniform float uTimeW;
+      varying vec3 vWp; varying vec3 vNw; varying vec4 vFa; varying vec4 vFb; varying vec3 vLp; varying vec3 vLn;
       vec3 gEmis = vec3(0.0);
       ${GLSL_NOISE}
-      vec3 facade(vec3 base){
+      ${GLSL_SURF}
+      vec3 surface(vec3 base){
         vec3 n = abs(vNw);
+        vec3 N = normalize(vNw);
         float style = vFa.w;
         vec3 col = base * vFa.rgb;
+        #if defined(S5)
         // style 5: neon sign. style 6: lamp or window that carries its own light.
         if(style > 4.5 && style < 5.5){
           gEmis = vFa.rgb * (0.30 + 2.30*uNight);
           return vFa.rgb * (0.65 + 0.35*uNight);
         }
+        #endif
+        #if defined(S6)
         if(style > 5.5 && style < 6.5){
           gEmis = vFa.rgb * (0.08 + 1.70*uNight);
           return vFa.rgb;
         }
+        #endif
+        #if defined(S7)
         // style 7: turf. Mottled on top, a grass lip over bare earth on the sides.
         if(style > 6.5 && style < 7.5){
           float top = vFb.z;
           vec2 q = vWp.xz;
           if(n.y > 0.5){
             float big = fnoise(q*0.16), mid = fnoise(q*0.9), fine = fnoise(q*5.5), blade = fnoise(q*18.0);
-            vec3 g = col * (0.70 + 0.42*big) * (0.84 + 0.24*mid) * (0.90 + 0.16*fine) * (0.94 + 0.10*blade);
+            vec3 g = col * (0.70 + 0.42*big) * (0.84 + 0.24*mid) * (0.90 + 0.16*fine) * (0.94 + 0.10*blade*det(0.06));
             g = mix(g, g*vec3(1.22,1.08,0.70), smoothstep(0.55, 0.85, big)*0.55);   // dry, sunny patches
+            g = mix(g, g*vec3(0.78,0.92,0.74), smoothstep(0.62, 0.30, mid)*0.35);   // lusher, darker hollows
             // scattered flowers
             vec2 fc = floor(q*2.6); float fr = fh(fc);
             vec2 fo = fract(q*2.6) - 0.5;
-            float dot2 = step(0.985, fr) * (1.0 - smoothstep(0.10, 0.16, length(fo)));
+            float dot2 = step(0.985, fr) * (1.0 - smoothstep(0.10, 0.16, length(fo))) * det(0.4);
             vec3 fcol = mix(vec3(1.0,0.95,0.80), mix(vec3(1.0,0.85,0.25), vec3(0.95,0.45,0.70), step(0.993, fr)), step(0.989, fr));
             return mix(g, fcol, dot2);
           }
           float u2 = (n.x > n.z) ? vWp.z : vWp.x;
           float lip = smoothstep(0.30, 0.18, top - vWp.y + 0.05*fnoise(vec2(u2*3.0, 0.0)));
           vec3 earth = vec3(0.42,0.30,0.20) * (0.80 + 0.30*fnoise(vec2(u2*1.3, vWp.y*4.0)));
+          earth *= 0.88 + 0.16*fnoise(vec2(u2*5.0, vWp.y*9.0));
           return mix(earth, col*0.85, lip);
         }
+        #endif
+        #if defined(S8)
         // style 8: earth and rock. Layered strata, flecks, darker further down.
         if(style > 7.5 && style < 8.5){
           float u2 = (n.x > n.z) ? vWp.z : vWp.x;
@@ -1026,89 +1140,311 @@ function facadeMaterial(baseHex, night, moss){
           float strata = fnoise(vec2(u2*0.18, vWp.y*1.6)) * 0.6 + fnoise(vec2(u2*0.9, vWp.y*5.0)) * 0.4;
           vec3 r = col * (0.74 + 0.40*strata);
           r *= 0.92 + 0.10*fnoise(vWp.xz*7.0 + vWp.y*5.0);
+          {
+            vec3 Tr = (n.x > n.z) ? vec3(0.0,0.0,1.0) : vec3(1.0,0.0,0.0), Br = n.y > 0.5 ? vec3(0.0,0.0,1.0) : vec3(0.0,1.0,0.0);
+            if(n.y > 0.5) Tr = vec3(1.0,0.0,0.0);
+            vec2 q = vec2(dot(vWp, Tr), dot(vWp, Br)) * 3.2;
+            float a0 = fnoise(q), a1 = fnoise(q + vec2(0.25, 0.0)), a2 = fnoise(q + vec2(0.0, 0.25));
+            r *= mix(1.0, relief(N, normalize(N + (Tr*(a1 - a0) + Br*(a2 - a0))*2.6)), det(0.2));
+          }
+          r *= 0.94 + 0.12*(fh(floor(vWp.xz*14.0 + vWp.y*9.0)) - 0.5)*det(0.07);        // grit
           r = mix(r, r*vec3(0.80,0.84,0.90), smoothstep(0.62, 0.9, fnoise(vec2(u2*0.5, vWp.y*0.4))));
           // moss creeps over the tops of stones and down the first few centimetres
           float mossN = fnoise(vWp.xz*1.3 + vWp.y);
           float mossAmt = (n.y > 0.5 ? smoothstep(0.55, 0.80, mossN) : smoothstep(0.10, 0.0, vFb.z - vWp.y) * smoothstep(0.55, 0.8, mossN)) * uMoss;
-          r = mix(r, vec3(0.34,0.42,0.22) * (0.8 + 0.3*fnoise(vWp.xz*6.0)), mossAmt*0.55);
+          mossAmt = max(mossAmt, smoothstep(0.35, 0.95, N.y) * smoothstep(0.40, 0.75, fnoise(vWp.xz*0.8 + 3.0)) * uMoss);
+          r = mix(r, vec3(0.34,0.42,0.22) * (0.8 + 0.3*fnoise(vWp.xz*6.0)), mossAmt*0.60);
           return r;
         }
-        // style 9: foliage. Clumped light and shade so a canopy is not one flat block.
+        #endif
+        #if defined(S9)
+        // style 9: foliage. Clumps of leaves in light and shade, darker deep inside.
         if(style > 8.5 && style < 9.5){
           vec3 q3 = vWp * 2.3;
           float leaf = fnoise(q3.xz + q3.y*1.7) * 0.6 + fnoise(q3.xy*1.9 + q3.z) * 0.4;
-          vec3 f = col * (0.70 + 0.52*leaf);
-          f *= 0.86 + 0.26*smoothstep(-0.2, 0.9, vNw.y);          // lit from above
+          float fine = fnoise(vWp.xz*9.0 + vWp.y*7.0);
+          vec3 f = col * (0.66 + 0.56*leaf) * (0.90 + 0.18*fine*det(0.1));
+          f *= 0.84 + 0.28*smoothstep(-0.2, 0.9, N.y);           // lit from above
+          f = mix(f, f*vec3(1.10,1.06,0.80), smoothstep(0.6, 0.9, leaf)*0.35);   // sunlit leaf tips go yellow
           return f;
         }
+        #endif
+        #if defined(S10)
+        // style 10: a car's glasshouse. Tinted glass with the sky in it, body-colour pillars and roof.
+        if(style > 9.5 && style < 10.5){
+          vec3 paint = vFa.rgb;
+          float roof = step(0.75, vLn.y);
+          float sideGlass = step(0.5, abs(vLn.z)) * (1.0 - step(0.30, vLp.x)) * step(-0.36, vLp.x)
+                          * (1.0 - step(abs(vLp.x + 0.05), 0.035)) * step(vLp.y, 0.34);
+          float endGlass = step(0.3, abs(vLn.x)) * step(abs(vLp.z), 0.40) * (1.0 - roof);
+          float glass = clamp(sideGlass + endGlass, 0.0, 1.0);
+          vec3 V = normalize(cameraPosition - vWp), R = reflect(-V, N);
+          float F = fresnel(N, V, 0.10);
+          gEmis += glass * skyRefl(R) * mix(0.35, 1.0, F);
+          return mix(paint * (0.92 + 0.10*N.y), vec3(0.03,0.035,0.045), glass);
+        }
+        #endif
+        #if defined(S11)
+        // style 11: car paint, with black plastic along the sills and bumpers and a clear coat
+        if(style > 10.5 && style < 11.5){
+          vec3 paint = vFa.rgb;
+          float trim = clamp(step(vLp.y, -0.36) + step(0.465, abs(vLp.x))*step(vLp.y, -0.14), 0.0, 1.0);
+          vec3 c = mix(paint, vec3(0.045,0.045,0.05), trim);
+          float side = step(0.5, abs(vLn.z));
+          float gap = (1.0 - step(0.005, abs(vLp.x - 0.10))) + (1.0 - step(0.005, abs(vLp.x + 0.20)));
+          c *= 1.0 - 0.55*gap*side*step(-0.36, vLp.y)*step(vLp.y, 0.44)*det(0.03);
+          float handle = side * step(abs(vLp.y - 0.26), 0.025) * (step(abs(vLp.x - 0.02), 0.03) + step(abs(vLp.x + 0.27), 0.03));
+          c = mix(c, vec3(0.55,0.56,0.58), handle*det(0.03));
+          vec3 V = normalize(cameraPosition - vWp), R = reflect(-V, N);
+          float F = fresnel(N, V, 0.05);
+          gEmis += skyRefl(R) * F * (1.0 - trim) * 0.9;
+          return c;
+        }
+        #endif
+        #if defined(S12)
+        // style 12: bark, split into ridges that run up the trunk
+        if(style > 11.5 && style < 12.5){
+          float a = atan(vLp.z, vLp.x);
+          float ridges = fnoise(vec2(a*4.0, vWp.y*2.6)) * 0.6 + fnoise(vec2(a*10.0, vWp.y*8.0)) * 0.4;
+          return col * (0.60 + 0.58*ridges);
+        }
+        #endif
+        #if defined(S14)
+        // style 14: a fountain. Weathered stone, and water wherever it can stand.
+        if(style > 13.5 && style < 14.5){
+          float rr = length(vLp.xz);
+          float water = step(0.9, vLn.y) * ((vFb.x > 1.5) ? step(max(abs(vLp.x), abs(vLp.z)), 0.43) : step(rr, 0.44)) * step(0.0, vLp.y - vFb.y);
+          vec3 stone = vec3(0.70,0.68,0.64) * (0.86 + 0.18*fnoise(vWp.xz*3.0 + vWp.y*4.0));
+          stone = mix(stone, stone*vec3(0.80,0.86,0.80), smoothstep(0.2, -0.4, vLp.y)*0.5);   // damp and green low down
+          float rip = fnoise(vWp.xz*5.0 + vec2(uTimeW*0.6, uTimeW*0.4)) * 0.5 + fnoise(vWp.xz*11.0 - vec2(uTimeW*0.9, 0.0)) * 0.5;
+          vec3 Nw = normalize(vec3((rip - 0.5)*0.35, 1.0, (fnoise(vWp.zx*6.0 + uTimeW*0.5) - 0.5)*0.35));
+          vec3 V = normalize(cameraPosition - vWp), Rw = reflect(-V, Nw);
+          float Fw = fresnel(Nw, V, 0.04);
+          gEmis += water * skyRefl(Rw) * mix(0.25, 1.0, Fw);
+          return mix(stone, vec3(0.05,0.10,0.11), water);
+        }
+        #endif
+        #if defined(S15)
+        // style 15: a wooden crate. Boards, and a frame round every face.
+        if(style > 14.5 && style < 15.5){
+          vec3 a3 = abs(vLp);
+          vec2 fq = (a3.x > 0.499) ? vLp.zy : ((a3.z > 0.499) ? vLp.xy : vLp.xz);
+          float frame = step(0.40, max(abs(fq.x), abs(fq.y)));
+          float boardV = fract((fq.y + 0.5)*6.0);
+          float board = fh(vec2(floor((fq.y + 0.5)*6.0), dot(floor(vLp*2.0 + 0.5), vec3(1.0, 7.0, 13.0))));
+          vec3 wood = col * (0.80 + 0.28*board) * (0.90 + 0.14*fnoise(vec2(fq.x*3.0, (fq.y + board)*40.0)));
+          wood *= 1.0 - 0.35*(1.0 - smoothstep(0.0, 0.06, min(boardV, 1.0 - boardV)))*(1.0 - frame)*det(0.02);
+          vec3 fr = col * 0.86 * (0.90 + 0.14*fnoise(vec2(fq.y*3.0, fq.x*40.0)));
+          vec3 c = mix(wood, fr, frame);
+          c *= 1.0 - 0.30*(1.0 - smoothstep(0.0, 0.02, abs(max(abs(fq.x), abs(fq.y)) - 0.40)))*det(0.02);
+          return c;
+        }
+        #endif
+        #if defined(S13)
+        // style 13: a wheel. Rubber, and a five-spoke alloy on the outer face.
+        if(style > 12.5 && style < 13.5){
+          float r = length(vLp.xy) * 2.0;
+          float face = step(0.5, abs(vLn.z));
+          float a = atan(vLp.y, vLp.x);
+          float spoke = step(0.55, fract(a/6.2832*5.0));
+          vec3 alloy = vec3(0.60,0.62,0.64) * mix(1.0, 0.25, spoke*step(0.22, r)*step(r, 0.56));
+          alloy *= 1.0 - 0.5*step(0.56, r);
+          vec3 tyre = vec3(0.05,0.05,0.055) * (1.0 + 0.4*face*step(0.64, r)*step(r, 0.72));
+          return mix(tyre, alloy, face * step(r, 0.64));
+        }
+        #endif
         float grain = fnoise(vWp.xz*6.0 + vWp.y*3.0);
         col *= 0.93 + 0.10*grain;
-        if(style < 0.5) return col;
-        if(n.y > 0.5){ col *= 0.88 + 0.16*fnoise(vWp.xz*0.9); return col; }
+        #if defined(S0)
+        if(style < 0.5){
+          vec3 Tp = (n.x > n.z) ? vec3(0.0,0.0,1.0) : vec3(1.0,0.0,0.0), Bp = n.y > 0.5 ? vec3(0.0,0.0,1.0) : vec3(0.0,1.0,0.0);
+          vec2 pq = vec2(dot(vWp, Tp), dot(vWp, Bp))*13.0;
+          float p0 = fnoise(pq), p1 = fnoise(pq + vec2(0.3, 0.0)), p2 = fnoise(pq + vec2(0.0, 0.3));
+          col *= mix(1.0, relief(N, normalize(N + (Tp*(p1 - p0) + Bp*(p2 - p0))*0.35)), det(0.07));
+          col *= 0.96 + 0.08*fh(floor(vec2(dot(vWp, Tp), dot(vWp, Bp))*40.0))*det(0.025);
+          return col;
+        }
+        #endif
+        #if defined(SB)
+        // the roof and ceiling slabs of a building: a pale stone coping round the edge,
+        // with a drip line under it, rather than a black band
+        #ifdef SLAB
+        if(n.y < 0.5){
+          vec3 cope = mix(vec3(0.60,0.59,0.56), vFa.rgb*0.72, 0.35) * (0.90 + 0.12*grain);
+          float fyS = fract(vWp.y*2.5);
+          return cope * (1.0 - 0.25*step(fyS, 0.12));
+        }
+        #endif
+        // roofs: tar and gravel, the joins between the sheets
+        if(n.y > 0.5){
+          float grav = fh(floor(vWp.xz*22.0));
+          col *= (0.86 + 0.18*fnoise(vWp.xz*0.9)) * (1.0 + 0.18*(grav - 0.5)*det(0.05));
+          vec2 seam = abs(fract(vWp.xz/2.8) - 0.5);
+          col *= 1.0 - 0.12*step(0.487, max(seam.x, seam.y))*det(0.4);
+          return col;
+        }
         float u = (n.x > n.z) ? vWp.z : vWp.x;
         float v = vWp.y;
         float winW = vFb.x, dirt = vFb.y, hmax = vFb.z, seed = vFb.w;
         float floorH = 3.2;
         float fy = fract(v / floorH), fx = fract(u / winW + seed);
         float fi = floor(v / floorH), ci = floor(u / winW + seed);
+        float wd = det(winW*0.25);
+        // brick: running bond, each brick its own shade, pale mortar
+        #ifdef S2
         if(style > 1.5 && style < 2.5){
-          float row = floor(v*6.0);
-          float brick = step(0.08, fract(v*6.0)) * step(0.07, fract(u*2.2 + fract(row*0.5)));
-          col *= 0.84 + 0.16*brick;
+          float bh = 0.077, bw = 0.235;
+          float row = floor(v / bh);
+          float bu = u / bw + mod(row, 2.0)*0.5;
+          float bi = floor(bu);
+          vec2 bf = vec2(fract(bu), fract(v / bh));
+          float bc = fh(vec2(bi, row));
+          vec3 brick = col * (0.80 + 0.34*bc) * vec3(1.0 + 0.08*(bc - 0.5), 1.0, 1.0 - 0.06*(bc - 0.5));
+          float mortar = clamp(step(bf.x, 0.05) + step(bf.y, 0.12), 0.0, 1.0);
+          float bd = det(bh);
+          col = mix(col, mix(brick, col*1.18 + 0.05, mortar*0.85), bd);
+          // each brick's edges are rounded off and the mortar sits back: light on top, shade underneath
+          vec3 Tt = (n.x > n.z) ? vec3(0.0,0.0,1.0) : vec3(1.0,0.0,0.0);
+          float ey = smoothstep(0.78, 0.98, bf.y) - smoothstep(0.34, 0.14, bf.y);
+          float ex = smoothstep(0.88, 0.99, bf.x) - smoothstep(0.18, 0.07, bf.x);
+          col *= mix(1.0, relief(N, normalize(N + vec3(0.0,1.0,0.0)*ey*0.7 + Tt*ex*0.7)), bd);
+        } else
+        #endif
+        {
+          // render: rough to the touch, a string course at every floor
+          vec3 Tt = (n.x > n.z) ? vec3(0.0,0.0,1.0) : vec3(1.0,0.0,0.0);
+          vec2 sq = vec2(u, v)*11.0;
+          float s0 = fnoise(sq), s1 = fnoise(sq + vec2(0.3, 0.0)), s2 = fnoise(sq + vec2(0.0, 0.3));
+          col *= mix(1.0, relief(N, normalize(N + (Tt*(s1 - s0) + vec3(0.0,1.0,0.0)*(s2 - s0))*0.50)), det(0.08));
+          float band = step(fy, 0.035) * step(4.0, v) * step(v, hmax + 0.2);
+          col = mix(col, col*1.10 + 0.02, band*wd);
+          col *= 1.0 - 0.14*step(0.035, fy)*step(fy, 0.05)*step(4.0, v)*step(v, hmax + 0.2)*wd;
         }
         bool glassy = style > 2.5 && style < 3.5;
         float wx0=0.24, wx1=0.76, wy0=0.34, wy1=0.78;
-        if(glassy){ wx0=0.14; wx1=0.86; wy0=0.26; wy1=0.90; }
+        if(glassy){ wx0=0.05; wx1=0.95; wy0=0.20; wy1=0.94; }
+        bool storey = v >= 3.2 && v <= hmax;
         float inWin = step(wx0,fx)*step(fx,wx1)*step(wy0,fy)*step(fy,wy1);
-        if(v < 3.2 || v > hmax) inWin = 0.0;
-        float frame = step(wx0-0.05,fx)*step(fx,wx1+0.05)*step(wy0-0.06,fy)*step(fy,wy1+0.06) - inWin;
-        if(v < 3.2 || v > hmax) frame = 0.0;
+        if(!storey) inWin = 0.0;
+        float frame = step(wx0-0.04,fx)*step(fx,wx1+0.04)*step(wy0-0.045,fy)*step(fy,wy1+0.045) - inWin;
+        if(!storey) frame = 0.0;
+        float lx = (fx - wx0)/(wx1 - wx0), ly = (fy - wy0)/(wy1 - wy0);
         float pane = fh(vec2(fi, ci) + seed);
-        vec3 glass = mix(vec3(0.17,0.22,0.27), vec3(0.58,0.66,0.72), pane*pane);
-        glass = mix(glass, vec3(0.72,0.82,0.92), smoothstep(0.35,1.0,fy)*0.40);
-        if(glassy) glass = mix(glass, vec3(0.45,0.60,0.70), 0.5);
+        // behind the glass: a dim room; some have blinds down or curtains drawn
+        vec3 room = mix(vec3(0.045,0.05,0.06), vec3(0.15,0.14,0.13), pane);
+        float kind = fh(vec2(ci*3.7, fi*1.3) + seed*5.0);
+        if(!glassy){
+          if(kind < 0.22) room = mix(room, vec3(0.80,0.78,0.72), (0.30 + 0.35*step(0.5, fract(ly*10.0))*wd) * step(0.35, ly));
+          else if(kind < 0.42){
+            float cur = smoothstep(0.30, 0.20, lx) + smoothstep(0.70, 0.80, lx);
+            room = mix(room, vec3(0.70,0.58,0.48)*(0.75 + 0.4*pane), clamp(cur, 0.0, 1.0)*0.85);
+          }
+        } else room = mix(room, vec3(0.08,0.12,0.15), 0.6);
+        // the reveal: the glass sits back in the wall, so the lintel and the jambs shade it
+        float reveal = glassy ? 1.0 : (1.0 - 0.55*smoothstep(0.84, 1.0, ly)) * (1.0 - 0.22*(smoothstep(0.10, 0.0, lx) + smoothstep(0.90, 1.0, lx)));
+        vec3 V = normalize(cameraPosition - vWp);
+        float F = fresnel(N, V, glassy ? 0.10 : 0.05);
         // after dark roughly half the flats are awake, each with its own bulb colour
         float lit = step(0.46, fh(vec2(ci*1.7, fi*3.1) + seed*2.0));
         float warm = fh(vec2(fi*5.0, ci*2.3) + seed);
         vec3 bulb = mix(vec3(1.00,0.78,0.42), vec3(0.72,0.86,1.00), step(0.78, warm));
         bulb = mix(bulb, vec3(0.55,1.00,0.80), step(0.94, warm));
         float on = lit * uNight * inWin;
-        glass = mix(glass, bulb, on * 0.92);
-        col = mix(col, glass, inWin);
-        gEmis += bulb * on * (0.55 + 0.45*warm);
-        col *= 1.0 - 0.38*max(frame, 0.0);
-        col *= 1.0 - 0.20*(1.0 - smoothstep(0.0, 0.05, min(fy, 1.0-fy)));
+        // glazing bars: a cross in each ordinary window
+        float bars = glassy ? 0.0 : clamp((1.0 - step(0.022, abs(lx - 0.5))) + (1.0 - step(0.022, abs(ly - 0.66))), 0.0, 1.0) * wd;
+        float glassA = inWin * (1.0 - bars);
+        vec3 frameCol = mix(vec3(0.86,0.85,0.82), vec3(0.16,0.17,0.18), step(0.55, fract(seed*3.17)));
+        col = mix(col, room * reveal * (1.0 - F*0.6), glassA);
+        col = mix(col, frameCol, clamp(frame*wd + bars*inWin, 0.0, 1.0));
+        if(glassA > 0.0) gEmis += glassA * (skyRefl(reflect(-V, N)) * F * reveal * (glassy ? 1.15 : 0.95) + bulb * on * (0.55 + 0.45*warm) * (1.0 - F));
+        if(!glassy && storey){
+          // a stone sill under each window, and the shadow it throws
+          float sill = step(wx0-0.05,fx)*step(fx,wx1+0.05)*step(wy0-0.085,fy)*step(fy,wy0-0.045);
+          col = mix(col, vec3(0.80,0.78,0.74)*(0.9 + 0.1*grain), sill*wd);
+          col *= 1.0 - 0.28*step(wx0-0.05,fx)*step(fx,wx1+0.05)*step(wy0-0.13,fy)*step(fy,wy0-0.085)*wd;
+          // rain has run down from each sill
+          float run = step(wx0,fx)*step(fx,wx1)*step(fy, wy0-0.085) * fnoise(vec2(u*9.0, v*0.8));
+          col *= 1.0 - 0.10*run*dirt*wd;
+        }
+        if(glassy){
+          // curtain wall: spandrel panels between the floors, dark mullions between the bays
+          float spandrel = storey ? (1.0 - inWin) : 0.0;
+          col = mix(col, col*0.62 + vec3(0.02,0.03,0.04), spandrel*0.7);
+          float mull = storey ? (1.0 - step(0.012, min(fx, 1.0 - fx))) : 0.0;
+          col = mix(col, vec3(0.10,0.11,0.12), mull*wd);
+        }
+        col *= 1.0 - 0.12*(1.0 - smoothstep(0.0, 0.05, min(fy, 1.0-fy)))*(glassy ? 0.0 : 1.0);
         float streak = fnoise(vec2(u*3.0, v*0.7)) * fnoise(vec2(u*11.0, v*0.3));
         col *= 1.0 - dirt*0.45*smoothstep(1.8, 0.0, v);
         col *= 1.0 - dirt*0.28*streak;
         col *= 1.0 - 0.10*step(v, 0.45);
+        // ivy has taken the odd older wall, climbing from the pavement in patches
+        #ifdef IVY
+        if(style < 2.5 && step(fract(seed*7.31 + 0.13), 0.16) > 0.5){
+          float reach = 0.6 + 2.8*fnoise(vec2(u*0.30, seed*9.0));
+          // leaves scattered on a jittered lattice: each pixel belongs to the nearest one,
+          // shaded its own way, with dark gaps where the leaves part
+          vec2 lq = vec2(u, v)*7.5;
+          vec2 lc = floor(lq), lf = fract(lq);
+          float best = 9.0, lh = 0.0;
+          for(int j=-1;j<=1;j++) for(int i=-1;i<=1;i++){
+            vec2 cc = lc + vec2(float(i), float(j));
+            vec2 dd = vec2(float(i), float(j)) + vec2(fh(cc + 3.1), fh(cc + 7.7))*0.8 - lf;
+            float d2 = dot(dd, dd);
+            if(d2 < best){ best = d2; lh = fh(cc + seed*13.0); }
+          }
+          float leafD = sqrt(best);
+          float edgeN = 0.55*(fnoise(vec2(u*1.9, v*1.9)) - 0.5) + 0.25*(lh - 0.5);
+          float ivy = step(v, reach + edgeN) * step(0.36, fnoise(vec2(u*0.42 + seed*3.0, 2.0)));
+          ivy *= mix(1.0, step(leafD, 0.62), smoothstep(reach - 0.5, reach + 0.2, v));    // leaves break up the top edge
+          vec3 leaf = vec3(0.13,0.25,0.08) * (0.55 + 0.75*lh) * (1.0 - 0.45*smoothstep(0.32, 0.62, leafD)*det(0.13));
+          leaf = mix(leaf, vec3(0.30,0.40,0.12), step(0.86, lh)*0.7);
+          col = mix(col, leaf, ivy);
+        }
+        #endif
         // style 4: a street wall. Its ground floor is split into bays, each one
         // plain, a roller shutter or a pasted poster.
+        #ifdef S4
         if(style > 3.5 && style < 4.5 && v < 3.3){
           float bayW = winW * 2.0;
           float bi = floor(u / bayW + seed), bf = fract(u / bayW + seed);
-          float kind = fh(vec2(bi, seed*3.1));
+          float kind2 = fh(vec2(bi, seed*3.1));
           float pil = step(bf, 0.07) + step(0.93, bf);                // pilasters between bays
           col = mix(col, col*1.10, pil);
-          if(kind < 0.34 && pil < 0.5){                               // roller shutter
+          if(kind2 < 0.34 && pil < 0.5){                              // roller shutter
             float inS = step(0.14, bf) * step(bf, 0.86) * step(0.35, v) * step(v, 2.75);
-            vec3 metal = vec3(0.52,0.54,0.56) * (0.86 + 0.14*step(0.5, fract(v*9.0)));
+            vec3 metal = vec3(0.52,0.54,0.56) * (0.86 + 0.14*step(0.5, fract(v*9.0))*det(0.11));
             metal *= 1.0 - 0.25*fnoise(vec2(u*2.0, v*0.8)) * dirt;
             col = mix(col, metal, inS);
             col *= 1.0 - 0.45*step(0.14, bf)*step(bf,0.86)*step(2.75, v)*step(v, 2.92);   // housing
-          } else if(kind < 0.58 && pil < 0.5){                        // posters
+          } else if(kind2 < 0.58 && pil < 0.5){                       // posters
             float px = fract(bf*2.0), pi = floor(bf*2.0);
             float inP = step(0.18, px) * step(px, 0.82) * step(0.95, v) * step(v, 2.25);
             float h2 = fh(vec2(bi*2.0+pi, 7.0));
             vec3 pc = mix(vec3(0.90,0.25,0.22), vec3(0.20,0.45,0.80), step(0.33, h2));
             pc = mix(pc, vec3(0.95,0.78,0.20), step(0.66, h2));
-            float band = step(0.55, fract((v-0.95)*1.6)) * 0.25;
-            pc = mix(pc, vec3(0.95,0.93,0.88), band + 0.35*step(1.95, v));
+            float band2 = step(0.55, fract((v-0.95)*1.6)) * 0.25;
+            pc = mix(pc, vec3(0.95,0.93,0.88), band2 + 0.35*step(1.95, v));
             col = mix(col, pc, inP * step(h2, 0.9));
           }
           col *= 1.0 - 0.30*step(3.05, v);                            // string course over the shops
         }
+        #endif
         return col;
+        #else
+        return col;
+        #endif
+      }
+      vec3 facade(vec3 base){
+        pxw = length(fwidth(vWp));
+        float style = vFa.w;
+        vec3 c = surface(base);
+        // walls go dark where they meet the ground: light from the sky cannot get in there
+        if(style < 4.5 || style > 6.5){
+          float gy = vWp.y - uGroundY;
+          if(abs(normalize(vNw).y) < 0.6 && gy > -0.3) c *= mix(0.58, 1.0, smoothstep(0.0, 1.0, gy));
+        }
+        return c;
       }
     ` + sh.fragmentShader
         .replace('#include <color_fragment>',
@@ -1121,17 +1457,21 @@ function facadeMaterial(baseHex, night, moss){
 
 function groundMaterial(baseHex, grid, night){
   const mat = new THREE.MeshLambertMaterial({color:baseHex});
+  mat.extensions = {derivatives:true};
   mat.onBeforeCompile = sh => {
     sh.uniforms.uGrid = {value:new THREE.Vector4(grid.first, grid.pitch, grid.block, grid.n)};
     sh.uniforms.uInset = {value:grid.inset};
     sh.uniforms.uNight = {value: night};
+    Object.assign(sh.uniforms, FACADE_U);
     sh.vertexShader = 'varying vec3 vWp;\n' + sh.vertexShader.replace('#include <begin_vertex>',
       '#include <begin_vertex>\n vWp = (modelMatrix * vec4(transformed,1.0)).xyz;');
     sh.fragmentShader = `
       uniform vec4 uGrid; uniform float uInset; uniform float uNight; varying vec3 vWp;
       vec3 gEmis = vec3(0.0);
       ${GLSL_NOISE}
+      ${GLSL_SURF}
       vec3 street(vec3 base){
+        pxw = length(fwidth(vWp));
         vec2 p = vWp.xz;
         vec2 rel = (p - uGrid.x) / uGrid.y;
         vec2 idx = floor(rel + 0.5);
@@ -1141,19 +1481,51 @@ function groundMaterial(baseHex, grid, night){
         float hb = uGrid.z*0.5;
         bool onBlock = inGrid && dm.x < hb && dm.y < hb;
         float grain = fnoise(p*4.0), grain2 = fnoise(p*0.35);
+        float near = det(0.04);
         vec3 col;
         if(onBlock){
-          col = base * (1.04 + 0.08*grain);
-          vec2 tile = fract(p / 1.2);
-          float line = 1.0 - smoothstep(0.0, 0.035, min(min(tile.x,1.0-tile.x), min(tile.y,1.0-tile.y)));
-          col *= 1.0 - 0.16*line;
+          // pavement: square slabs laid in courses, each a slightly different shade
+          col = base * 0.68 * (0.96 + 0.08*grain);
+          vec2 sp = p / 1.2;
+          vec2 tile = fract(sp);
+          float slab = fh(floor(sp) + 17.0);
+          col *= 0.93 + 0.12*slab;
+          col *= 1.0 - 0.10*step(0.82, slab)*fnoise(p*3.0);                     // a stained one here and there
+          float joint = 1.0 - smoothstep(0.0, 0.03, min(min(tile.x,1.0-tile.x), min(tile.y,1.0-tile.y)));
+          col *= 1.0 - 0.20*joint*det(0.3);
           float w = max(dm.x, dm.y) - (hb - uInset);
-          col *= 1.0 - 0.30*(1.0 - smoothstep(0.0, 0.9, w));
+          col *= 1.0 - 0.30*(1.0 - smoothstep(0.0, 0.9, w));                    // shade against the buildings
+          // kerb stones along the edge: paler, cut every metre, a bright arris on the road side
           float edge = min(hb - dm.x, hb - dm.y);
-          col *= 1.0 + 0.14*(1.0 - smoothstep(0.0, 0.16, edge));
+          float kerb = 1.0 - step(0.30, edge);
+          float along = (hb - dm.x < hb - dm.y) ? p.y : p.x;
+          float kj = 1.0 - smoothstep(0.0, 0.025, abs(fract(along) - 0.5) - 0.475);
+          vec3 kc = vec3(0.62,0.61,0.58) * (0.92 + 0.10*fnoise(p*6.0)) * (1.0 - 0.25*kj*det(0.2));
+          col = mix(col, kc, kerb);
+          col *= 1.0 + 0.16*(1.0 - smoothstep(0.0, 0.05, edge));
+          col *= 1.0 - 0.12*kerb*smoothstep(0.24, 0.30, edge);                  // joint where kerb meets slabs
         } else {
-          col = base * 0.52 * (0.86 + 0.18*grain) * (0.92 + 0.16*grain2);
+          // asphalt: dark binder with pale stones in it, patched and cracked
+          col = base * 0.29 * (0.90 + 0.14*grain) * (0.94 + 0.10*grain2);
+          float agg = fh(floor(p*42.0));
+          col *= 1.0 + 0.26*(agg - 0.5)*near;
+          col *= 1.0 + 0.10*(step(0.97, agg) - 0.03)*near;
+          vec2 pc = floor(p/vec2(6.1, 3.7)), pf = fract(p/vec2(6.1, 3.7));
+          float patchA = step(0.84, fh(pc*1.37)) * step(0.12, pf.x)*step(pf.x,0.88)*step(0.18,pf.y)*step(pf.y,0.82);
+          col = mix(col, col*0.74, patchA);
+          col *= 1.0 + 0.10*patchA*(1.0 - smoothstep(0.0, 0.04, min(min(pf.x-0.12, 0.88-pf.x), min(pf.y-0.18, 0.82-pf.y))));
+          float cr = abs(fnoise(p*0.62 + 3.0) - 0.5);
+          float crack = (1.0 - smoothstep(0.0, 0.010, cr)) * step(0.58, fnoise(p*0.11 + 7.0));
+          col *= 1.0 - 0.50*crack*det(0.02);
           vec2 sc = abs(abs(f) - 0.5) * uGrid.y;
+          float street = uGrid.y - uGrid.z;
+          // the lanes: tyres polish two bands in each, oil darkens the middle
+          float inZ = step(sc.x, street*0.5), inX = step(sc.y, street*0.5);
+          float lane = inZ > 0.5 ? sc.x : sc.y;
+          float oil = (1.0 - smoothstep(0.0, 0.5, abs(lane - street*0.25))) * 0.10;
+          col *= 1.0 - oil*float(inGrid);
+          float tyres = (1.0 - smoothstep(0.0, 0.35, abs(abs(lane - street*0.25) - 0.85))) * 0.06;
+          col *= 1.0 + tyres*float(inGrid);
           float dashZ = step(sc.x, 0.07) * step(fract(p.y / 2.6), 0.5);
           float dashX = step(sc.y, 0.07) * step(fract(p.x / 2.6), 0.5);
           float inter = step(sc.x, 2.2) * step(sc.y, 2.2);
@@ -1162,22 +1534,36 @@ function groundMaterial(baseHex, grid, night){
           float kerbX = step(abs(dm.y - hb), 0.30) * step(dm.x, hb);
           float gutter = max(kerbX, kerbZ) * float(inGrid);
           col *= 1.0 - 0.18*gutter;
-          if(inGrid) col = mix(col, vec3(0.80,0.70,0.34), dash*0.80);
-          col *= 1.0 - 0.14*step(0.74, fnoise(p*1.7));
-          col *= 1.0 - 0.08*step(0.80, fnoise(p*9.0));
+          // the kerb's own shadow on the road, a hand's width
+          float out2 = max(dm.x, dm.y) - hb;
+          col *= 1.0 - 0.32*(1.0 - smoothstep(0.0, 0.16, out2))*float(inGrid)*step(min(dm.x, dm.y), hb);
+          float wear = 0.55 + 0.45*smoothstep(0.25, 0.65, fnoise(p*2.2));
+          if(inGrid) col = mix(col, vec3(0.74,0.62,0.26), dash*0.85*wear);
+          col *= 1.0 - 0.10*smoothstep(0.62, 0.86, fnoise(p*1.7));
+          col *= 1.0 - 0.06*smoothstep(0.70, 0.90, fnoise(p*9.0));
           // crossings on the approach to every intersection
           float bandX = step(sc.y, 3.4) * step(2.4, sc.x) * step(sc.x, 4.6);
           float bandZ = step(sc.x, 3.4) * step(2.4, sc.y) * step(sc.y, 4.6);
           float zebra = max(bandX * step(0.5, fract(p.x/1.3)), bandZ * step(0.5, fract(p.y/1.3)));
-          col = mix(col, vec3(0.86,0.86,0.84), zebra*0.72*float(inGrid));
-          // manhole covers dropped on a coarse lattice
+          col = mix(col, vec3(0.74,0.74,0.72), zebra*0.80*float(inGrid)*wear);
+          // manhole covers dropped on a coarse lattice, with a ring and a grid on them
           vec2 mh = fract(p/9.0) - 0.5;
-          float man = 1.0 - smoothstep(0.045, 0.06, length(mh));
-          col = mix(col, base*0.34, man*step(0.55, fh(floor(p/9.0))));
+          float ml = length(mh)*9.0;
+          float man = (1.0 - smoothstep(0.40, 0.46, ml)) * step(0.55, fh(floor(p/9.0)));
+          vec3 iron = base*0.30*(0.9 + 0.2*step(0.5, fract((p.x + p.y)*3.0))*near);
+          iron *= 1.0 - 0.35*step(0.34, ml);
+          col = mix(col, iron, man);
+          // drains in the gutter every so often
+          float drain = step(abs(out2 - 0.25), 0.18) * step(abs(fract((kerbZ > 0.5 ? p.y : p.x)/11.0) - 0.5), 0.03) * float(inGrid);
+          col = mix(col, vec3(0.05,0.05,0.055)*(0.8 + 0.4*step(0.5, fract((kerbZ > 0.5 ? p.y : p.x)*14.0))), drain*0.9);
         }
-        // standing water: darker, and it catches the sky after dark
-        float wet = smoothstep(0.62, 0.92, fnoise(p*0.6)) * (onBlock ? 0.25 : 1.0);
-        col *= 1.0 - 0.34*wet;
+        // standing water: darker, and it mirrors the sky
+        float wet = smoothstep(0.80, 0.97, fnoise(p*0.6)) * (onBlock ? 0.0 : 1.0);
+        col *= 1.0 - 0.30*wet;
+        vec3 V = normalize(cameraPosition - vWp);
+        vec3 R = reflect(-V, vec3(0.0, 1.0, 0.0));
+        float F = fresnel(vec3(0.0, 1.0, 0.0), V, 0.03);
+        gEmis += skyRefl(R) * F * wet * 0.25;
         gEmis += vec3(0.10,0.16,0.26) * wet * uNight * 0.8;
         return col;
       }
@@ -1189,6 +1575,297 @@ function groundMaterial(baseHex, grid, night){
   };
   return mat;
 }
+
+// ---------------------------------------------------------------------------
+// Shapes. world.js describes the world as boxes, because boxes are what collide;
+// some carry a `shape` saying what the box really is. Each shape below is a unit
+// geometry filling the same [-0.5, 0.5] cube as the box, so it takes the box's
+// instance matrix unchanged: a tree crown is still exactly as big as the box
+// that stood for it, a car still exactly as long.
+// ---------------------------------------------------------------------------
+function vhash3(x, y, z, s){
+  let h = Math.imul(x|0, 374761393) ^ Math.imul(y|0, 668265263) ^ Math.imul(z|0, 1440662683) ^ Math.imul(s|0, 2246822519);
+  h = Math.imul(h ^ (h >>> 13), 1274126177);
+  h ^= h >>> 16;
+  return (h >>> 0) / 4294967296;
+}
+function vnoise3(x, y, z, s){
+  const xi = Math.floor(x), yi = Math.floor(y), zi = Math.floor(z);
+  const xf = x - xi, yf = y - yi, zf = z - zi;
+  const u = xf*xf*(3-2*xf), v = yf*yf*(3-2*yf), w = zf*zf*(3-2*zf);
+  const L = (a, b, t)=>a + (b - a)*t, c = (i, j, k)=>vhash3(xi+i, yi+j, zi+k, s);
+  return L(L(L(c(0,0,0), c(1,0,0), u), L(c(0,1,0), c(1,1,0), u), v),
+           L(L(c(0,0,1), c(1,0,1), u), L(c(0,1,1), c(1,1,1), u), v), w);
+}
+// average the normals of every vertex sharing a position: smooth shading on any geometry
+function smoothNormals(g){
+  g.computeVertexNormals();
+  const pos = g.attributes.position, nrm = g.attributes.normal, n = pos.count, acc = new Map();
+  const key = i => Math.round(pos.getX(i)*1e4) + ',' + Math.round(pos.getY(i)*1e4) + ',' + Math.round(pos.getZ(i)*1e4);
+  for(let i=0;i<n;i++){
+    const k = key(i); let a = acc.get(k); if(!a){ a = [0,0,0]; acc.set(k, a); }
+    a[0] += nrm.getX(i); a[1] += nrm.getY(i); a[2] += nrm.getZ(i);
+  }
+  for(let i=0;i<n;i++){ const a = acc.get(key(i)), l = Math.hypot(a[0], a[1], a[2]) || 1; nrm.setXYZ(i, a[0]/l, a[1]/l, a[2]/l); }
+  nrm.needsUpdate = true;
+  return g;
+}
+// stretch a geometry so its bounds are exactly the unit cube
+function fitUnit(g){
+  g.computeBoundingBox();
+  const b = g.boundingBox, c = new V3(), sz = new V3();
+  b.getCenter(c); b.getSize(sz);
+  g.translate(-c.x, -c.y, -c.z);
+  g.scale(1/Math.max(sz.x, 1e-6), 1/Math.max(sz.y, 1e-6), 1/Math.max(sz.z, 1e-6));
+  return g;
+}
+function mergeGeos(list){
+  const parts = list.map(g=>g.index ? g.toNonIndexed() : g);
+  let n = 0; parts.forEach(g=>{ n += g.attributes.position.count; });
+  const P = new Float32Array(n*3), N = new Float32Array(n*3), C = new Float32Array(n*3);
+  let o = 0;
+  parts.forEach(g=>{
+    const k = g.attributes.position.count;
+    P.set(g.attributes.position.array, o*3); N.set(g.attributes.normal.array, o*3);
+    if(g.attributes.color) C.set(g.attributes.color.array, o*3); else C.fill(1, o*3, (o + k)*3);
+    o += k;
+  });
+  const out = new THREE.BufferGeometry();
+  out.setAttribute('position', new THREE.BufferAttribute(P, 3));
+  out.setAttribute('normal', new THREE.BufferAttribute(N, 3));
+  out.setAttribute('color', new THREE.BufferAttribute(C, 3));
+  return out;
+}
+// brightness baked into the vertices, like the boxes get: darker low down and underneath
+function shadeShape(g, lo, hi){
+  g.computeBoundingBox();
+  const bb = g.boundingBox, pos = g.attributes.position, nrm = g.attributes.normal, n = pos.count;
+  const col = new Float32Array(n*3);
+  for(let i=0;i<n;i++){
+    const t = (pos.getY(i) - bb.min.y) / Math.max(1e-6, bb.max.y - bb.min.y);
+    let v = lo + (hi - lo)*t;
+    const ny = nrm.getY(i);
+    if(ny > 0.5) v *= 1.06; else if(ny < -0.5) v *= 0.72;
+    col[i*3] = col[i*3+1] = col[i*3+2] = v;
+  }
+  g.setAttribute('color', new THREE.BufferAttribute(col, 3));
+  return g;
+}
+// a lumpy ball: canopies, shrubs. Two octaves of noise push the surface in and out;
+// underneath it is pressed flatter, the way a crown hangs over its own shade.
+function blobGeo(seed, flat, amp){
+  const g = new THREE.IcosahedronBufferGeometry(0.5, 2);
+  const p = g.attributes.position;
+  for(let i=0;i<p.count;i++){
+    let x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    const l = Math.hypot(x, y, z) || 1, dx = x/l, dy = y/l, dz = z/l;
+    const n1 = vnoise3(dx*2.1 + 5, dy*2.1, dz*2.1, seed), n2 = vnoise3(dx*4.7, dy*4.7 + 3, dz*4.7, seed + 7);
+    const r = 0.5 * (1 + (amp||0.34)*(n1 - 0.5) + 0.16*(n2 - 0.5));
+    x = dx*r; y = dy*r; z = dz*r;
+    if(y < -flat) y = -flat + (y + flat)*0.35;
+    p.setXYZ(i, x, y, z);
+  }
+  smoothNormals(g);
+  return shadeShape(fitUnit(g), 0.62, 1.08);
+}
+// grass: a clump of blades, each a pair of back-to-back triangles lit from above
+function tuftGeo(seed){
+  const P = [], N = [];
+  const R = (i)=>vhash3(i, 3, 9, seed);
+  const blades = 13;
+  for(let b=0;b<blades;b++){
+    const a = b/blades*Math.PI*2 + R(b)*0.5, r0 = 0.05 + R(b+40)*0.16, h = 0.55 + R(b+80)*0.45;
+    const lean = 0.18 + R(b+120)*0.26, w = 0.035 + R(b+160)*0.03;
+    const cx = Math.cos(a), cz = Math.sin(a), tx = -cz, tz = cx;
+    const b0 = [cx*r0 - tx*w, -0.5, cz*r0 - tz*w], b1 = [cx*r0 + tx*w, -0.5, cz*r0 + tz*w];
+    const tp = [cx*(r0 + lean), -0.5 + h, cz*(r0 + lean)];
+    [[b0, b1, tp], [b1, b0, tp]].forEach(tri=>tri.forEach(v=>{ P.push(v[0], v[1], v[2]); N.push(cx*0.35, 0.93, cz*0.35); }));
+  }
+  const g = new THREE.BufferGeometry();
+  g.setAttribute('position', new THREE.BufferAttribute(new Float32Array(P), 3));
+  g.setAttribute('normal', new THREE.BufferAttribute(new Float32Array(N), 3));
+  return shadeShape(fitUnit(g), 0.45, 1.15);
+}
+// rock: a rounded box, dented by noise, cut flat on top so what you stand on is where
+// the collider says it is. `slab` keeps the top face exactly level.
+function rockGeo(seed, round, amp, slab){
+  const g = new THREE.BoxBufferGeometry(1, 1, 1, 5, 4, 5);
+  const p = g.attributes.position, inner = 0.5 - round;
+  for(let i=0;i<p.count;i++){
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    const cx = Math.max(-inner, Math.min(inner, x)), cy = Math.max(-inner, Math.min(inner, y)), cz = Math.max(-inner, Math.min(inner, z));
+    let dx = x - cx, dy = y - cy, dz = z - cz; const l = Math.hypot(dx, dy, dz) || 1;
+    dx /= l; dy /= l; dz /= l;
+    const n = vnoise3(x*2.6 + 11, y*2.6, z*2.6, seed)*0.7 + vnoise3(x*6.1, y*6.1 + 4, z*6.1, seed + 3)*0.3;
+    const top = slab && y > 0.49;
+    let px = cx + dx*round, py = cy + dy*round, pz = cz + dz*round;
+    const d = amp*(n - 0.5)*2;
+    px += dx*d; pz += dz*d; if(!top) py += dy*d*0.6;
+    if(top) py = 0.5;
+    else if(py > 0.40) py = 0.40 + (py - 0.40)*0.45;           // a flattish top
+    p.setXYZ(i, px, py, pz);
+  }
+  const ng = g.toNonIndexed(); ng.computeVertexNormals();           // faceted: reads as stone
+  return shadeShape(fitUnit(ng), 0.70, 1.02);
+}
+// standing stone: tall, tapering, edges knocked off
+function stoneGeo(seed){
+  const g = new THREE.BoxBufferGeometry(1, 1, 1, 3, 7, 3);
+  const p = g.attributes.position;
+  for(let i=0;i<p.count;i++){
+    let x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    const k = 1 - 0.20*(y + 0.5);
+    const inner = 0.36;
+    const cx = Math.max(-inner, Math.min(inner, x)), cz = Math.max(-inner, Math.min(inner, z));
+    let dx = x - cx, dz = z - cz; const l = Math.hypot(dx, dz) || 1;
+    const n = vnoise3(x*3 + 2, y*2.2, z*3, seed);
+    x = (cx + dx/l*0.14*Math.min(1, l/0.14)*1.0) * k * (1 + 0.10*(n - 0.5));
+    z = (cz + dz/l*0.14*Math.min(1, l/0.14)*1.0) * k * (1 + 0.10*(n - 0.5));
+    if(y > 0.45) y = 0.45 + (y - 0.45)*0.6 - 0.02*(x*x + z*z);
+    p.setXYZ(i, x, y, z);
+  }
+  const ng = g.toNonIndexed(); ng.computeVertexNormals();
+  return shadeShape(fitUnit(ng), 0.72, 1.02);
+}
+// a layer of the rock beneath the island: a ragged frustum, narrower underneath
+function layerGeo(seed){
+  const g = new THREE.CylinderBufferGeometry(0.5, 0.40, 1, 20, 3);
+  const p = g.attributes.position;
+  for(let i=0;i<p.count;i++){
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i), r = Math.hypot(x, z);
+    if(r < 1e-4) continue;
+    const a = Math.atan2(z, x);
+    const n = vnoise3(Math.cos(a)*2.2 + 3, y*2.4, Math.sin(a)*2.2, seed);
+    const k = y > 0.49 ? 1 : 1 + 0.16*(n - 0.5);
+    p.setXYZ(i, x*k, y, z*k);
+  }
+  const ng = g.toNonIndexed(); ng.computeVertexNormals();
+  return shadeShape(fitUnit(ng), 0.66, 1.0);
+}
+function trunkGeo(){
+  const g = new THREE.CylinderBufferGeometry(0.34, 0.5, 1, 10, 4);
+  const p = g.attributes.position;
+  for(let i=0;i<p.count;i++){
+    const x = p.getX(i), y = p.getY(i), z = p.getZ(i);
+    const flare = 1 + 0.45*Math.max(0, -0.30 - y);                // roots spreading into the ground
+    const bend = 0.06*Math.sin((y + 0.5)*2.4);
+    p.setXYZ(i, x*flare + bend, y, z*flare);
+  }
+  smoothNormals(g);
+  return shadeShape(fitUnit(g), 0.72, 1.0);
+}
+// car body, built at real size (4.4 x 1.0 x 1.9, nose towards +x) and then squeezed
+// into the unit cube; every car in world.js has exactly those proportions
+function carBodyGeo(){
+  const s = new THREE.Shape();
+  s.moveTo(-2.02, -0.50);
+  s.lineTo(1.98, -0.50);
+  s.quadraticCurveTo(2.20, -0.50, 2.20, -0.30);
+  s.lineTo(2.20, -0.02);
+  s.quadraticCurveTo(2.20, 0.16, 2.02, 0.20);                    // nose
+  s.quadraticCurveTo(1.70, 0.28, 1.36, 0.40);                    // bonnet rising to the windscreen
+  s.lineTo(1.26, 0.47);
+  s.lineTo(-0.98, 0.49);                                        // waistline under the glass
+  s.quadraticCurveTo(-1.35, 0.47, -1.98, 0.43);                  // boot lid
+  s.quadraticCurveTo(-2.20, 0.40, -2.20, 0.18);
+  s.lineTo(-2.20, -0.30);
+  s.quadraticCurveTo(-2.20, -0.50, -2.02, -0.50);
+  const g = new THREE.ExtrudeBufferGeometry(s, {depth:1.66, bevelEnabled:true, bevelThickness:0.12,
+                                                bevelSize:0.10, bevelSegments:3, curveSegments:6});
+  g.translate(0, 0, -0.83);
+  const ng = g.toNonIndexed(); smoothNormals(ng);
+  return shadeShape(fitUnit(ng), 0.80, 1.02);
+}
+// the glasshouse: raked screens front and back, the roof pulled in at the sides
+function cabinGeo(){
+  const s = new THREE.Shape();
+  s.moveTo(-1.15, -0.29); s.lineTo(1.15, -0.29);
+  s.lineTo(0.42, 0.25); s.quadraticCurveTo(0.32, 0.29, 0.18, 0.29);
+  s.lineTo(-0.62, 0.29); s.quadraticCurveTo(-0.74, 0.29, -0.80, 0.24);
+  s.lineTo(-1.15, -0.29);
+  const g = new THREE.ExtrudeBufferGeometry(s, {depth:1.60, bevelEnabled:true, bevelThickness:0.06,
+                                                bevelSize:0.05, bevelSegments:2, curveSegments:4});
+  g.translate(0, 0, -0.80);
+  const p = g.attributes.position;
+  for(let i=0;i<p.count;i++){                                  // tumblehome: narrower at the roof
+    const y = p.getY(i), k = 1 - 0.12*Math.max(0, (y + 0.29)/0.58);
+    p.setZ(i, p.getZ(i)*k);
+  }
+  const ng = g.toNonIndexed(); ng.computeVertexNormals();
+  return shadeShape(fitUnit(ng), 0.92, 1.02);
+}
+function wheelGeo(){
+  const t = new THREE.CylinderBufferGeometry(0.5, 0.5, 1, 22, 1); t.rotateX(Math.PI/2);
+  const g = t.toNonIndexed(); g.computeVertexNormals();
+  return shadeShape(g, 1, 1);
+}
+function cylGeo(rt, rb, seg){
+  const g = new THREE.CylinderBufferGeometry(rt, rb, 1, seg || 16, 1);
+  smoothNormals(g);
+  return shadeShape(g, 0.80, 1.0);
+}
+function dishGeo(){
+  const pts = [new THREE.Vector2(0.02, -0.5), new THREE.Vector2(0.22, -0.40), new THREE.Vector2(0.40, -0.12), new THREE.Vector2(0.5, 0.5)];
+  const g = new THREE.LatheBufferGeometry(pts, 18);
+  return shadeShape(fitUnit(g), 0.9, 1.0);
+}
+// a square stone basin, water standing a hand below the rim
+function basinGeo(){
+  const t = 0.07, parts = [];
+  const box = (w, h, d, x, y, z)=>{ const g = new THREE.BoxBufferGeometry(w, h, d); g.translate(x, y, z); parts.push(g.toNonIndexed()); };
+  box(1, 1, t, 0, 0, -0.5 + t/2); box(1, 1, t, 0, 0, 0.5 - t/2);
+  box(t, 1, 1 - 2*t, -0.5 + t/2, 0, 0); box(t, 1, 1 - 2*t, 0.5 - t/2, 0, 0);
+  box(1 - 2*t, 0.86, 1 - 2*t, 0, -0.07, 0);                       // the water, standing to 0.36
+  const g = mergeGeos(parts.map(p=>{ p.computeVertexNormals(); return p; }));
+  return shadeShape(g, 0.80, 1.02);
+}
+// a two-tier fountain turned on a lathe: plinth, column, a wide bowl, a small one, a spout
+function fountainGeo(){
+  const P = [[0.001,-0.5],[0.46,-0.5],[0.46,-0.40],[0.16,-0.36],[0.13,-0.30],[0.13,0.02],[0.30,0.06],[0.48,0.10],[0.50,0.16],
+             [0.44,0.16],[0.42,0.12],[0.08,0.12],[0.07,0.14],[0.07,0.36],[0.18,0.40],[0.25,0.44],[0.21,0.44],[0.20,0.42],
+             [0.04,0.42],[0.035,0.46],[0.03,0.50],[0.001,0.50]].map(p=>new THREE.Vector2(p[0], p[1]));
+  const g = new THREE.LatheBufferGeometry(P, 22);
+  const ng = g.toNonIndexed(); ng.computeVertexNormals();
+  return shadeShape(ng, 0.82, 1.02);
+}
+let SHAPES = null;
+function shapeGeos(){
+  if(SHAPES) return SHAPES;
+  const make = {
+    crown:()=>[blobGeo(11, 0.22), blobGeo(23, 0.22), blobGeo(37, 0.22), blobGeo(51, 0.22)],
+    bush: ()=>[blobGeo(61, 0.18, 0.26), blobGeo(73, 0.18, 0.26), blobGeo(89, 0.18, 0.26)],
+    moss: ()=>[blobGeo(97, 0.10, 0.12)],
+    tuft: ()=>[tuftGeo(3), tuftGeo(5), tuftGeo(8)],
+    rock: ()=>[rockGeo(4, 0.16, 0.10), rockGeo(9, 0.20, 0.12), rockGeo(15, 0.12, 0.09)],
+    slab: ()=>[rockGeo(21, 0.10, 0.07, true)],
+    stone:()=>[stoneGeo(6), stoneGeo(13)],
+    layer:()=>[layerGeo(2), layerGeo(7)],
+    trunk:()=>[trunkGeo()],
+    pole: ()=>[cylGeo(0.42, 0.5, 10)],
+    cyl:  ()=>[cylGeo(0.5, 0.5, 18)],
+    dish: ()=>[dishGeo()],
+    ball: ()=>[shadeShape(new THREE.SphereBufferGeometry(0.5, 10, 8), 1, 1)],
+    cone1:()=>[cylGeo(0.33, 0.5, 18)],
+    cone2:()=>[cylGeo(0.356, 0.39, 18)],
+    cone3:()=>[cylGeo(0.14, 0.61, 18)],
+    carBody:()=>[carBodyGeo()],
+    cabin:()=>[cabinGeo()],
+    wheel:()=>[wheelGeo()],
+    basin:()=>[basinGeo()],
+    fountain:()=>[fountainGeo()],
+    crate:()=>[UNIT]
+  };
+  SHAPES = {};
+  // a shape that cannot be built (an odd browser) simply stays the box it was
+  for(const k in make){ try { SHAPES[k] = make[k](); } catch(e){ SHAPES[k] = [UNIT]; } }
+  return SHAPES;
+}
+// shapes whose long axis follows the box: turned a quarter when the box runs along z
+const SHAPE_TURN = {carBody:1, cabin:1, wheel:1};
+// a surface of their own in the facade shader
+const SHAPE_STYLE = {trunk:12, carBody:11, cabin:10, wheel:13, basin:14, fountain:14, crate:15};
+// seen from both sides
+const SHAPE_DOUBLE = {tuft:1, dish:1};
 
 function buildWorld(def){
   clearWorld();
@@ -1208,6 +1885,12 @@ function buildWorld(def){
   lightHemi.intensity = T.hemi[2];
   lightFill.color.setHex(T.fill[0]);      lightFill.intensity = T.fill[1];
   SUN_DIR.set(T.sunDir[0], T.sunDir[1], T.sunDir[2]).normalize();
+
+  // what the glass, paint and puddles reflect, and where the ground is for the contact shadow
+  FACADE_U.uSkyTop.value.setHex(T.skyTop); FACADE_U.uSkyBot.value.setHex(T.skyBot);
+  FACADE_U.uSunDir.value.copy(SUN_DIR);
+  FACADE_U.uSunCol.value.setHex(T.sun[0]).multiplyScalar(T.sun[1]*(1 - 0.75*T.night));
+  FACADE_U.uGroundY.value = (def.navY || 0.05) - 0.05;
 
   const sky = makeSky(T, !!def.voidBelow);
   sky.frustumCulled = false;
@@ -1230,10 +1913,17 @@ function buildWorld(def){
     scene.add(g); world.ground = g;
   }
 
-  // one instanced mesh per palette slot; every instance carries its own facade parameters
-  const groups = def.palette.map(()=>[]);
-  def.boxes.forEach(b=>{
-    groups[b.c||0].push(b);
+  // one instanced mesh per palette slot and shape; every instance carries its own facade parameters
+  const SH = shapeGeos();
+  const groups = new Map();
+  def.boxes.forEach((b, bi)=>{
+    let key = String(b.c||0);
+    if(b.shape && SH[b.shape]){
+      const vars = SH[b.shape];
+      key += '|' + b.shape + '|' + (vars.length > 1 ? Math.floor(vhash3(bi, 17, 5, 1)*vars.length) : 0);
+    }
+    if(!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(b);
     if(b.deco){
       // poles, trees and signs block the view without blocking movement
       if(b.h >= 1.6 && Math.abs(b.x) < def.half+2 && Math.abs(b.z) < def.half+2){
@@ -1248,30 +1938,119 @@ function buildWorld(def){
     });
   });
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), pos = new V3(), scl = new V3(), ax = new V3(0,1,0);
-  groups.forEach((list,i)=>{
+  groups.forEach((list, key)=>{
     if(!list.length) return;
-    const geo = UNIT.clone();
+    const parts = key.split('|'), i = +parts[0], shape = parts[1], vi = +(parts[2] || 0);
+    const geo = shape ? SH[shape][vi].clone() : UNIT.clone();
     const fa = new Float32Array(list.length*4), fb = new Float32Array(list.length*4);
-    const mat = facadeMaterial(def.palette[i], T.night, def.voidBelow ? 1 : 0);
+    const cs = def.classStyle ? def.classStyle[i] : undefined;
+    const ss = shape ? SHAPE_STYLE[shape] : undefined;
+    const styleOf = b=>{
+      const bp = (b.bid!==undefined) ? def.buildings[b.bid] : null;
+      return (b.style !== undefined) ? b.style : (ss !== undefined ? ss : (bp ? bp.style : (cs !== undefined ? cs : 0)));
+    };
+    const styles = new Set(list.map(styleOf));
+    const mat = facadeMaterial(def.palette[i], T.night, def.voidBelow ? 1 : 0, !def.voidBelow && i === 2 && !shape,
+                               !def.voidBelow && i === 0 && !shape, styles);
+    if(shape && SHAPE_DOUBLE[shape]) mat.side = THREE.DoubleSide;
     const im = new THREE.InstancedMesh(geo, mat, list.length);
     list.forEach((b,k)=>{
-      q.setFromAxisAngle(ax, b.ry||0);
-      pos.set(b.x, b.y+b.h/2, b.z); scl.set(b.w,b.h,b.d);
+      let ry = b.ry||0, sx = b.w, sz = b.d;
+      // a car or wheel parked along z: turn the shape a quarter (nose to +z) rather than squash it
+      if(shape && SHAPE_TURN[shape] && b.w < b.d){ ry -= Math.PI/2; sx = b.d; sz = b.w; }
+      q.setFromAxisAngle(ax, ry);
+      pos.set(b.x, b.y+b.h/2, b.z); scl.set(sx, b.h, sz);
       m4.compose(pos, q, scl);
       im.setMatrixAt(k,m4);
       const bp = (b.bid!==undefined) ? def.buildings[b.bid] : null;
       const t = b.tint || (bp ? bp.tint : [1,1,1]);
       fa[k*4]=t[0]; fa[k*4+1]=t[1]; fa[k*4+2]=t[2];
-      const cs = def.classStyle ? def.classStyle[b.c||0] : undefined;
-      fa[k*4+3]= (b.style !== undefined) ? b.style : (bp ? bp.style : (cs !== undefined ? cs : 0));
+      fa[k*4+3]= styleOf(b);
       fb[k*4]= bp?bp.winW:1; fb[k*4+1]= bp?bp.dirt:0; fb[k*4+2]= bp?bp.hmax:(b.y+b.h); fb[k*4+3]= bp?bp.seed:0;
+      if(shape === 'basin'){ fb[k*4] = 2; fb[k*4+1] = 0.30; }          // square pool, water above this height
+      if(shape === 'fountain'){ fb[k*4] = 1; fb[k*4+1] = 0.0; }        // round bowls
     });
     geo.setAttribute('aFa', new THREE.InstancedBufferAttribute(fa,4));
     geo.setAttribute('aFb', new THREE.InstancedBufferAttribute(fb,4));
     im.instanceMatrix.needsUpdate = true;
-    im.castShadow = true; im.receiveShadow = true;
+    im.castShadow = !(shape === 'tuft' || shape === 'ball'); im.receiveShadow = true;
     scene.add(im); world.meshes.push(im);
   });
+
+  // contact shadows on the ground under everything that stands on it. The sun's
+  // shadow shows where its light falls; this is where no light gets in at all.
+  try {
+    const gy = world.navY - 0.05, list = [];
+    def.boxes.forEach(b=>{
+      if(b.shape === 'tuft' || b.shape === 'ball' || b.shape === 'wheel' || b.shape === 'crown' || b.style === 5 || b.style === 6) return;
+      const onGround = Math.abs(b.y - gy) < 0.05 || (b.shape === 'carBody' && Math.abs(b.y - 0.32 - gy) < 0.05);
+      if(!onGround || b.h < 0.25 || Math.max(b.w, b.d) > 60) return;
+      if(Math.abs(b.x) > def.half + 3 || Math.abs(b.z) > def.half + 3) return;
+      list.push(b);
+    });
+    const ROUND = {cyl:1, pole:1, cone1:1, trunk:1, bush:1, rock:1, stone:1, fountain:1, basin:0};
+    [false, true].forEach(round=>{
+      const part = list.filter(b=>!!ROUND[b.shape] === round);
+      if(!part.length) return;
+      const mat = new THREE.MeshBasicMaterial({color:0x000000, alphaMap:round ? aoRoundTexture() : aoTexture(), transparent:true,
+                                               opacity:0.42, depthWrite:false, polygonOffset:true, polygonOffsetFactor:-2});
+      const im = new THREE.InstancedMesh(new THREE.PlaneBufferGeometry(1, 1), mat, part.length);
+      const m = new THREE.Matrix4(), qq = new THREE.Quaternion(), qy = new THREE.Quaternion(), pp = new V3(), sc = new V3();
+      const flat = new THREE.Quaternion().setFromAxisAngle(new V3(1,0,0), -Math.PI/2);
+      part.forEach((b,i)=>{
+        // tall and thin (a pole) shades little; wide and low (a car) shades a lot
+        let pad = Math.min(0.22 + 0.16*Math.min(b.h, 2.5), 0.15 + 0.6*Math.max(b.w, b.d)) + (b.shape === 'carBody' ? 0.25 : 0);
+        if(round) pad += 0.12*Math.max(b.w, b.d);
+        qy.setFromAxisAngle(new V3(0,1,0), b.ry || 0);
+        qq.copy(qy).multiply(flat);
+        pp.set(b.x, gy + 0.011 + (i % 7)*0.0004, b.z); sc.set(b.w + pad*2, b.d + pad*2, 1);
+        m.compose(pp, qq, sc); im.setMatrixAt(i, m);
+      });
+      im.instanceMatrix.needsUpdate = true;
+      im.renderOrder = 1;
+      scene.add(im); world.meshes.push(im);
+    });
+    // a grille round the foot of every street tree
+    const pits = def.voidBelow ? [] : def.boxes.filter(b=>b.shape === 'trunk');
+    if(pits.length){
+      const mat = new THREE.MeshLambertMaterial({map:pitTexture(), polygonOffset:true, polygonOffsetFactor:-3});
+      const im = new THREE.InstancedMesh(new THREE.PlaneBufferGeometry(2.6, 2.6), mat, pits.length);
+      const m = new THREE.Matrix4(), qq = new THREE.Quaternion().setFromAxisAngle(new V3(1,0,0), -Math.PI/2), pp = new V3(), one = new V3(1,1,1);
+      pits.forEach((b,i)=>{ pp.set(b.x, 0.014, b.z); m.compose(pp, qq, one); im.setMatrixAt(i, m); });
+      im.instanceMatrix.needsUpdate = true; im.receiveShadow = true;
+      scene.add(im); world.meshes.push(im);
+    }
+    // the island's turf: clumps of grass scattered over every open patch of it
+    if(def.voidBelow){
+      const SH2 = shapeGeos(), cells = def.boxes.filter(b=>b.style === 7);
+      let seed = 4242;
+      const rr = ()=>{ seed = (seed*16807) % 2147483647; return seed/2147483647; };
+      const spots = [];
+      cells.forEach(c=>{
+        for(let k=0;k<9;k++){
+          const x = c.x + (rr() - 0.5)*c.w, z = c.z + (rr() - 0.5)*c.d, top = c.y + c.h;
+          if(!freeAt(x, top + 0.02, z, 0.25, 0.4)) continue;              // not inside a rock or a stone
+          spots.push([x, top, z, 0.35 + rr()*0.45, 0.22 + rr()*0.30, rr()*6.3, rr()]);
+        }
+      });
+      const gm = facadeMaterial(def.palette[4], T.night, 1, false, false, [9]); gm.side = THREE.DoubleSide;
+      const geo = SH2.tuft[0].clone();
+      const im = new THREE.InstancedMesh(geo, gm, spots.length);
+      const fa = new Float32Array(spots.length*4), fb = new Float32Array(spots.length*4);
+      const m = new THREE.Matrix4(), qq = new THREE.Quaternion(), pp = new V3(), sc = new V3(), yax = new V3(0,1,0);
+      spots.forEach((sp,i)=>{
+        qq.setFromAxisAngle(yax, sp[5]); pp.set(sp[0], sp[1] + sp[4]/2, sp[2]); sc.set(sp[3], sp[4], sp[3]);
+        m.compose(pp, qq, sc); im.setMatrixAt(i, m);
+        const g = 0.30 + sp[6]*0.14;
+        fa[i*4] = g*0.80; fa[i*4+1] = g*1.52; fa[i*4+2] = g*0.58; fa[i*4+3] = 9;
+        fb[i*4] = 1; fb[i*4+1] = 0; fb[i*4+2] = sp[1] + sp[4]; fb[i*4+3] = 0;
+      });
+      geo.setAttribute('aFa', new THREE.InstancedBufferAttribute(fa, 4));
+      geo.setAttribute('aFb', new THREE.InstancedBufferAttribute(fb, 4));
+      im.instanceMatrix.needsUpdate = true; im.receiveShadow = true;
+      scene.add(im); world.meshes.push(im);
+    }
+  } catch(e){ /* decoration only: a map without it still plays */ }
 
   // pools of lamp light on the road, only worth drawing once it is dark
   if(T.night > 0.25 && def.lights && def.lights.length){
@@ -5514,6 +6293,7 @@ function frame(){
   if(dt>0.1) dt = 0.1;
   const now = performance.now()/1000;
   if(world.sky && world.sky.material.uniforms) world.sky.material.uniforms.uTime.value = now;
+  WATER_T.value = now;
   refreshAudioGate();
 
   if(intro.active){

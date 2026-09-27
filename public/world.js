@@ -14,6 +14,10 @@
 }(typeof self !== 'undefined' ? self : this, function () {
 'use strict';
 
+// A box: x,z centre, y bottom, w/h/d size, c palette slot. Extra fields are for the
+// renderer only and never change what collides: tint, style, ry, and `shape`, which
+// says what the box really is (a tree crown, a car, a rock) so the client can draw
+// that instead. Adding or changing one must not draw from the RNG.
 function B(x,y,z,w,h,d,c,ex){ const b={x:x,y:y,z:z,w:w,h:h,d:d,c:c||0}; if(ex) for(const k in ex) b[k]=ex[k]; return b; }
 function mirror(list, out, ax, az){
   list.forEach(b=>{
@@ -83,7 +87,9 @@ function roofStair(out, cx, cz, w, h, R){
   const x = cx + w/2 + 1.6;
   const dir = R()<.5 ? '+z' : '-z';
   const z0 = dir==='+z' ? cz - len/2 : cz + len/2;
+  const i0 = out.length;
   stair(out, x, z0, dir, steps, rise, run, 1.35, 0);
+  for(let i=i0;i<out.length;i++) out[i].tint = [0.66,0.65,0.62];      // bare concrete
   return {x:x, z:(dir==='+z' ? z0+len/2 : z0-len/2), w:1.8, d:len+0.8};
 }
 
@@ -201,7 +207,7 @@ function cityMap(o){
       const px = tx+(R()-.5)*(tw-2), pz = tz+(R()-.5)*(td-2);
       if(!hiFits(px,pz,0.9,0.9,topY,topY+3.2)) continue;
       hiClaim(px,pz,0.9,0.9,topY,topY+3.2);
-      s.push(D(px, topY, pz, 0.07, 1.2+R()*1.8, 0.07, 2));
+      s.push(D(px, topY, pz, 0.07, 1.2+R()*1.8, 0.07, 2, {shape:'pole'}));
       if(R()<.5) s.push(D(px, topY+1.1, pz, 0.7, 0.06, 0.06, 2));
     }
     if(R()<.3){                                          // satellite dish
@@ -209,7 +215,7 @@ function cityMap(o){
       if(hiFits(px,pz,1.5,1.5,topY,topY+0.6)){
         hiClaim(px,pz,1.5,1.5,topY,topY+0.6);
         s.push(D(px, topY, pz, 0.9,0.35,0.9, 2));
-        s.push(D(px, topY+0.35, pz, 1.1,0.12,1.1, 2, {ry:R()*0.9}));
+        s.push(D(px, topY+0.35, pz, 1.1,0.12,1.1, 2, {ry:R()*0.9, shape:'dish'}));
       }
     }
     if(R()<.42){                                         // chimney
@@ -229,7 +235,7 @@ function cityMap(o){
       }
     }
     // downpipe on a corner
-    s.push(D(cx + (R()<.5?-1:1)*(bw/2+0.45), 0, cz + (R()<.5?-1:1)*(bd/2-0.6), 0.16, 4.1, 0.16, 2));
+    s.push(D(cx + (R()<.5?-1:1)*(bw/2+0.45), 0, cz + (R()<.5?-1:1)*(bd/2-0.6), 0.16, 4.1, 0.16, 2, {shape:'pole'}));
     // awnings and signs over doors; balconies upstairs
     const faces = [[0,0,-1],[1,0,1],[2,-1,0],[3,1,0]];
     faces.forEach(([fi,dx,dz])=>{
@@ -288,8 +294,8 @@ function cityMap(o){
     const r = R();
     const centre = (n%2===1) && i===(n-1)/2 && j===(n-1)/2;
     if(centre || r < o.lots){
-      s.push(B(cx,0,cz, w*0.42,0.9,w*0.42, 1));
-      s.push(B(cx,0.9,cz, w*0.2,1.4,w*0.2, 2));
+      s.push(B(cx,0,cz, w*0.42,0.9,w*0.42, 1, {shape:'basin'}));          // a square with a fountain
+      s.push(B(cx,0.9,cz, w*0.2,1.4,w*0.2, 2, {shape:'fountain'}));
       s.push(B(cx-w*0.36,0,cz+w*0.36, 2.4,0.9,0.8, 1));
       s.push(B(cx+w*0.36,0,cz-w*0.36, 2.4,0.9,0.8, 1));
       s.push(B(cx+w*0.36,0,cz+w*0.36, 0.8,0.9,2.4, 1));
@@ -362,9 +368,9 @@ function cityMap(o){
   // and no wider than TREE_FOOT so the reserved footprint actually matches the canopy
   function tree(x,z){
     const sc = 0.70+R()*0.25, g = 0.85+R()*0.3;
-    s.push(B(x,0,z, 0.26,2.1*sc,0.26, 3, {tint:[0.40,0.28,0.18]}));   // trunk is solid; the crown is not
-    s.push(D(x,1.95*sc,z, 2.3*sc,1.85*sc,2.3*sc, 4, {tint:[g,g,g], ry:R()*0.8}));
-    s.push(D(x+(R()-.5)*0.45, 2.62*sc, z+(R()-.5)*0.45, 1.5*sc,1.25*sc,1.5*sc, 4, {tint:[g*1.08,g*1.08,g*1.0], ry:R()*0.8}));
+    s.push(B(x,0,z, 0.26,2.1*sc,0.26, 3, {tint:[0.40,0.28,0.18], shape:'trunk'}));   // trunk is solid; the crown is not
+    s.push(D(x,1.95*sc,z, 2.3*sc,1.85*sc,2.3*sc, 4, {tint:[g,g,g], ry:R()*0.8, shape:'crown'}));
+    s.push(D(x+(R()-.5)*0.45, 2.62*sc, z+(R()-.5)*0.45, 1.5*sc,1.25*sc,1.5*sc, 4, {tint:[g*1.08,g*1.08,g*1.0], ry:R()*0.8, shape:'crown'}));
   }
   // lamp posts on alternating intersection corners
   for(let i=0;i<=n;i++) for(let j=0;j<=n;j++){
@@ -373,21 +379,21 @@ function cityMap(o){
     const sx = (i%2?1:-1)*(street/2-0.5), sz = (j%2?1:-1)*(street/2-0.5);
     if(!fits(x+sx, z+sz, 1.4, 1.4, 0.1)) continue;
     claim(x+sx, z+sz, 1.4, 1.4);
-    s.push(D(x+sx, 0, z+sz, 0.14,5.4,0.14, 2));
+    s.push(D(x+sx, 0, z+sz, 0.14,5.4,0.14, 2, {shape:'pole'}));
     s.push(D(x+sx-0.45*Math.sign(sx), 5.2, z+sz, 0.9,0.1,0.12, 2));
     emissive(x+sx-0.8*Math.sign(sx), 5.05, z+sz, 0.5,0.18,0.28, LAMP);
     lights.push({x:x+sx-0.8*Math.sign(sx), z:z+sz, r:11, c:[0.80,0.69,0.46]});
     if(R()<.4){                                              // fire hydrant
-      const hx = x+sx*0.7, hz = z+sz*0.7, red = {tint:[0.78,0.14,0.11]};
+      const hx = x+sx*0.7, hz = z+sz*0.7, red = {tint:[0.78,0.14,0.11], shape:'cyl'};
       s.push(D(hx, 0, hz, 0.34, 0.08, 0.34, 3, red));
       s.push(D(hx, 0.08, hz, 0.24, 0.48, 0.24, 3, red));
       s.push(D(hx, 0.56, hz, 0.30, 0.07, 0.30, 3, red));
-      s.push(D(hx, 0.63, hz, 0.16, 0.10, 0.16, 3, {tint:[0.86,0.74,0.20]}));
+      s.push(D(hx, 0.63, hz, 0.16, 0.10, 0.16, 3, {tint:[0.86,0.74,0.20], shape:'cyl'}));
       s.push(D(hx, 0.34, hz, 0.42, 0.10, 0.10, 3, {tint:[0.86,0.74,0.20]}));
     }
     if(R()<.45 && fits(x-sx, z-sz, 1.0, 1.0, 0.25)){     // traffic signal opposite
       claim(x-sx, z-sz, 1.0, 1.0);
-      s.push(D(x-sx, 0, z-sz, 0.16,3.4,0.16, 2));
+      s.push(D(x-sx, 0, z-sz, 0.16,3.4,0.16, 2, {shape:'pole'}));
       s.push(D(x-sx, 3.4, z-sz, 0.34,0.92,0.30, 2));
       const on = (R()*3)|0;
       [[0.62,[1.0,0.16,0.16]],[0.34,[1.0,0.78,0.15]],[0.06,[0.20,1.0,0.35]]].forEach((L,li)=>{
@@ -414,10 +420,10 @@ function cityMap(o){
     // reserve a wide strip across the street: two cars parked opposite each other left a
     // 0.80 m gap, and the player is 0.84 m wide, so the road was simply sealed
     claim(x, z, L + (alongX ? 0.35 : 2.6), Wd + (alongX ? 2.6 : 0.35));
-    s.push(B(x, 0.32, z, L, 1.0, Wd, 3, {tint:col}));
-    s.push(D(x + (alongX?0.2:0), 1.28, z + (alongX?0:0.2), alongX?2.3:1.72, 0.58, alongX?1.72:2.3, 5));
+    s.push(B(x, 0.32, z, L, 1.0, Wd, 3, {tint:col, shape:'carBody'}));
+    s.push(D(x + (alongX?0.2:0), 1.28, z + (alongX?0:0.2), alongX?2.3:1.72, 0.58, alongX?1.72:2.3, 5, {shape:'cabin', tint:col}));
     [[-1.45,-0.78],[-1.45,0.78],[1.45,-0.78],[1.45,0.78]].forEach(([a,b])=>{
-      s.push(D(x + (alongX?a:b), 0, z + (alongX?b:a), alongX?0.66:0.30, 0.64, alongX?0.30:0.66, 2));
+      s.push(D(x + (alongX?a:b), 0, z + (alongX?b:a), alongX?0.66:0.30, 0.64, alongX?0.30:0.66, 2, {shape:'wheel'}));
     });
     // a lamp at each corner of each end: one sign drove both the end and the side before,
     // which put a single light diagonally opposite another instead of a pair per end
@@ -442,7 +448,7 @@ function cityMap(o){
     }
     if(!placed) continue;
     claim(x, z, 2.0, 2.0);
-    s.push(B(x, 0, z, 1.5,1.2,1.5, 3, {tint:[0.62,0.50,0.34], ry:R()*0.6}));
+    s.push(B(x, 0, z, 1.5,1.2,1.5, 3, {tint:[0.62,0.50,0.34], ry:R()*0.6, shape:'crate'}));
     crates.push([x, z]);
   }
   // skyline past the walls: more of the same city fading out
@@ -528,7 +534,7 @@ function dressStreets(s, foot, crates, seed, D, NEON){
         } else if(kind < 0.72){                                 // planter with a shrub
           if(!fits(1.5, 0.62, 1.0)) continue;
           box(off, 0.31, 0, 1.40, 0.56, 0.48, 1);
-          box(off, 0.31, 0.48, 1.26, 0.46, 0.46, 4, {tint:[0.62,0.95,0.55]});
+          box(off, 0.31, 0.48, 1.26, 0.46, 0.46, 4, {tint:[0.62,0.95,0.55], shape:'bush'});
         } else if(kind < 0.86){                                 // vending machine, lit at night
           if(!fits(0.9, 0.62, 1.4)) continue;
           const v = pick(VEND);
@@ -566,9 +572,9 @@ function dressStreets(s, foot, crates, seed, D, NEON){
       if(!free(cx-0.2, cz-0.2, cx+0.2, cz+0.2, 0, 0.6)) continue;
       placed.push([cx-0.25, cz-0.25, cx+0.25, cz+0.25]);
       s.push(D(cx, 0, cz, 0.38, 0.04, 0.38, 2));
-      s.push(D(cx, 0.04, cz, 0.24, 0.30, 0.24, 3, {tint:[0.95,0.42,0.10]}));
-      s.push(D(cx, 0.22, cz, 0.25, 0.07, 0.25, 3, {tint:[0.96,0.96,0.94]}));
-      s.push(D(cx, 0.34, cz, 0.13, 0.18, 0.13, 3, {tint:[0.95,0.42,0.10]}));
+      s.push(D(cx, 0.04, cz, 0.24, 0.30, 0.24, 3, {tint:[0.95,0.42,0.10], shape:'cone1'}));
+      s.push(D(cx, 0.22, cz, 0.25, 0.07, 0.25, 3, {tint:[0.96,0.96,0.94], shape:'cone2'}));
+      s.push(D(cx, 0.34, cz, 0.13, 0.18, 0.13, 3, {tint:[0.95,0.42,0.10], shape:'cone3'}));
     }
   });
 
@@ -599,7 +605,7 @@ function dressStreets(s, foot, crates, seed, D, NEON){
       for(let b=1;b<bulbs;b++){
         const t = b/bulbs, sag = Math.sin(t*Math.PI)*0.45;
         const bx = alongX ? x0 + t*L : mx, bz = alongX ? mz : z0 + t*L;
-        s.push(D(bx, y - sag - 0.14, bz, 0.12, 0.14, 0.12, 3, {style:6, tint:col}));
+        s.push(D(bx, y - sag - 0.14, bz, 0.12, 0.14, 0.12, 3, {style:6, tint:col, shape:'ball'}));
       }
       strings++;
     }
@@ -656,34 +662,34 @@ function arenaMap(){
   [[0.94,3.0],[0.83,3.2],[0.68,3.4],[0.50,3.6],[0.31,4.0],[0.13,5.2]].forEach(([f,h],L)=>{
     y -= h;
     const rr = R*f, t = 0.42 - L*0.045;
-    s.push(D(0, y, 0, rr*2, h, rr*2, 1, {tint:[t+0.06,t*0.94,t*0.84]}));
-    s.push(D(0, y, 0, rr*1.9, h, rr*1.9, 1, {tint:[t+0.02,t*0.88,t*0.78], ry:Math.PI/4}));
+    s.push(D(0, y, 0, rr*2, h, rr*2, 1, {tint:[t+0.06,t*0.94,t*0.84], shape:'layer'}));
+    s.push(D(0, y, 0, rr*1.9, h, rr*1.9, 1, {tint:[t+0.02,t*0.88,t*0.78], ry:Math.PI/4, shape:'layer'}));
   });
   for(let k=0;k<16;k++){                                       // roots and stone hanging below
     const a = rnd()*Math.PI*2, rr = R*(0.30+rnd()*0.55), len = 3+rnd()*8;
     s.push(D(Math.cos(a)*rr, TOP-6.5-len, Math.sin(a)*rr, 1.5+rnd()*1.7, len, 1.5+rnd()*1.7, 1,
-             {tint:[0.34,0.27,0.21], ry:rnd()*1.5}));
+             {tint:[0.34,0.27,0.21], ry:rnd()*1.5, shape:'rock'}));
   }
   for(let k=0;k<10;k++){                                       // smaller islets drifting alongside
     const a = rnd()*Math.PI*2, rr = R*(1.35+rnd()*0.9), sz = 2+rnd()*5;
-    s.push(D(Math.cos(a)*rr, TOP-7-rnd()*16, Math.sin(a)*rr, sz, sz*0.55, sz, 1, {tint:[0.40,0.33,0.26], ry:rnd()*1.5}));
-    s.push(D(Math.cos(a)*rr, TOP-7-rnd()*0.001, Math.sin(a)*rr, sz*0.9, 0.5, sz*0.9, 4, {tint:[0.42,0.62,0.30]}));
+    s.push(D(Math.cos(a)*rr, TOP-7-rnd()*16, Math.sin(a)*rr, sz, sz*0.55, sz, 1, {tint:[0.40,0.33,0.26], ry:rnd()*1.5, shape:'rock'}));
+    s.push(D(Math.cos(a)*rr, TOP-7-rnd()*0.001, Math.sin(a)*rr, sz*0.9, 0.5, sz*0.9, 4, {tint:[0.42,0.62,0.30], shape:'bush'}));
   }
 
   // --- cover, claimed first so the planting avoids it
   [[-1,-1],[1,-1],[-1,1],[1,1]].forEach(([a,b])=>{
-    s.push(B(a*13, TOP, b*13, 1.8, 4.6, 1.8, 2, {tint:[0.52,0.50,0.46]}));   // standing stones
-    s.push(D(a*13, TOP+4.6, b*13, 2.6, 0.5, 2.6, 1, {tint:[0.46,0.44,0.40]}));
+    s.push(B(a*13, TOP, b*13, 1.8, 4.6, 1.8, 2, {tint:[0.52,0.50,0.46], shape:'stone'}));   // standing stones
+    s.push(D(a*13, TOP+4.6, b*13, 2.6, 0.5, 2.6, 1, {tint:[0.46,0.44,0.40], shape:'slab'}));
     claim(a*13, b*13, 2.4);
-    s.push(B(a*8.5, TOP, b*19, 4.4, 1.2, 1.2, 1, {tint:[0.56,0.52,0.45]}));  // fallen logs and rocks
+    s.push(B(a*8.5, TOP, b*19, 4.4, 1.2, 1.2, 1, {tint:[0.56,0.52,0.45], shape:'rock'}));  // fallen logs and rocks
     claim(a*8.5, b*19, 2.8);
-    s.push(B(a*20, TOP, b*6, 1.2, 1.9, 5.0, 1, {tint:[0.50,0.47,0.42]}));
+    s.push(B(a*20, TOP, b*6, 1.2, 1.9, 5.0, 1, {tint:[0.50,0.47,0.42], shape:'rock'}));
     claim(a*20, b*6, 3.0);
-    s.push(B(a*6.2, TOP, b*6.2, 1.6, 1.6, 1.6, 1, {tint:[0.54,0.51,0.45]}));   // clear of the outcrop
+    s.push(B(a*6.2, TOP, b*6.2, 1.6, 1.6, 1.6, 1, {tint:[0.54,0.51,0.45], shape:'rock'}));   // clear of the outcrop
     claim(a*6.2, b*6.2, 1.8);
   });
-  s.push(B(0, TOP, 0, 8, 1.0, 8, 1, {tint:[0.58,0.55,0.48]}));               // centre outcrop
-  s.push(D(0, TOP+1.0, 0, 7.2, 0.25, 7.2, 4, {tint:[0.36,0.58,0.26]}));
+  s.push(B(0, TOP, 0, 8, 1.0, 8, 1, {tint:[0.58,0.55,0.48], shape:'slab'}));               // centre outcrop
+  s.push(D(0, TOP+1.0, 0, 7.2, 0.25, 7.2, 4, {tint:[0.36,0.58,0.26], shape:'moss'}));
   claim(0, 0, 5.5);
   lights.push({x:0, z:0, r:16, c:[0.35,0.42,0.22]});
   const spawns = [];
@@ -710,26 +716,26 @@ function arenaMap(){
     if(roll < 0.12 && clear(px,pz,2.6)){                        // tree
       claim(px,pz,2.6);
       const sc = 0.75 + rnd()*0.3, g2 = 0.34 + rnd()*0.12;
-      s.push(B(px, TOP, pz, 0.30, 2.3*sc, 0.30, 1, {tint:[0.32,0.23,0.16]}));
-      s.push(D(px, TOP+2.1*sc, pz, 2.6*sc, 2.0*sc, 2.6*sc, 4, {tint:[g2*0.75,g2*1.5,g2*0.6], ry:rnd()}));
+      s.push(B(px, TOP, pz, 0.30, 2.3*sc, 0.30, 1, {tint:[0.32,0.23,0.16], shape:'trunk'}));
+      s.push(D(px, TOP+2.1*sc, pz, 2.6*sc, 2.0*sc, 2.6*sc, 4, {tint:[g2*0.75,g2*1.5,g2*0.6], ry:rnd(), shape:'crown'}));
       s.push(D(px+(rnd()-.5)*0.5, TOP+3.3*sc, pz+(rnd()-.5)*0.5, 1.7*sc, 1.4*sc, 1.7*sc, 4,
-               {tint:[g2*0.85,g2*1.62,g2*0.66], ry:rnd()}));
+               {tint:[g2*0.85,g2*1.62,g2*0.66], ry:rnd(), shape:'crown'}));
     } else if(roll < 0.26 && clear(px,pz,1.3)){                 // bush
       claim(px,pz,1.3);
       const g3 = 0.30 + rnd()*0.12;
       s.push(D(px, TOP, pz, 1.5+rnd()*0.7, 0.9+rnd()*0.5, 1.5+rnd()*0.7, 4,
-               {tint:[g3*0.78,g3*1.45,g3*0.58], ry:rnd()}));
+               {tint:[g3*0.78,g3*1.45,g3*0.58], ry:rnd(), shape:'bush'}));
     } else if(roll < 0.36 && clear(px,pz,1.4)){                 // boulder
       claim(px,pz,1.4);
       const r2 = 0.46+rnd()*0.10, sz = 1.1+rnd()*1.1;
-      s.push(B(px, TOP, pz, sz, sz*0.8, sz, 1, {tint:[r2,r2*0.96,r2*0.9], ry:rnd()}));
+      s.push(B(px, TOP, pz, sz, sz*0.8, sz, 1, {tint:[r2,r2*0.96,r2*0.9], ry:rnd(), shape:'rock'}));
     } else if(roll < 0.72){                                     // grass tufts, no collision
       for(let t=0;t<2;t++){
         const tx = x+(rnd()-.5)*cell*0.8, tz = z+(rnd()-.5)*cell*0.8;
         if(!clear(tx,tz,0.9)) continue;                         // don't grow inside a rock
         const g4 = 0.32 + rnd()*0.14;
         s.push(D(tx, TOP, tz, 0.5+rnd()*0.5, 0.3+rnd()*0.3, 0.5+rnd()*0.5, 4,
-                 {tint:[g4*0.8,g4*1.5,g4*0.6], ry:rnd()}));
+                 {tint:[g4*0.8,g4*1.5,g4*0.6], ry:rnd(), shape:'tuft'}));
       }
     }
   });
