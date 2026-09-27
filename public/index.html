@@ -2545,7 +2545,7 @@ function makeM9(finish){
   return {pin, blade:null, safe:grip, bite:null};
 }
 // ---------------------------------------------------------------------------
-// Karambit: a talon of a blade curling down out of the handle, edge on the
+// Karambit: a curved blade sweeping down out of the handle, edge on the
 // inside of the curve, and the finger ring at the other end. Built round the
 // ring: the ring's centre is the model's origin, because that is what it spins
 // round. The handle runs along +z from the ring and the blade beyond it.
@@ -2554,15 +2554,15 @@ function makeM9(finish){
 // ---------------------------------------------------------------------------
 const KH = 0.074;                                      // ring centre to the base of the blade
 const KBLADE = (function(){
-  const P0 = [KH, -0.0010], P1 = [KH + 0.063, -0.0030], P2 = [KH + 0.051, -0.0655];
+  const P0 = [KH, -0.0010], P1 = [KH + 0.056, 0.0000], P2 = [KH + 0.084, -0.0380];   // a sweep, not a hook
   const N = 44;
   const qd = (a, c, b, t)=>[2*(1-t)*(c[0]-a[0]) + 2*t*(b[0]-c[0]), 2*(1-t)*(c[1]-a[1]) + 2*t*(b[1]-c[1])];
   const E = [], G = [], S = [], C = [], W = [];
   for(let i=0;i<=N;i++){
     const t = i/N, p = qbez(P0, P1, P2, t), d = qd(P0, P1, P2, t), dl = Math.hypot(d[0], d[1]);
     const nx = -d[1]/dl, ny = d[0]/dl;                 // left normal: outside of the curl, the spine side
-    const ws = 0.0122*Math.pow(1-t, 0.72);             // spine half-width
-    const we = 0.0126*Math.pow(1-t, 0.92);             // edge half-width
+    const ws = 0.0132*Math.pow(1-t, 0.66);             // spine half-width
+    const we = 0.0138*Math.pow(1-t, 0.86);             // edge half-width
     const gl = -we*0.08;                               // the hollow grind runs up past the middle
     S.push([p[0] + nx*ws, p[1] + ny*ws]);
     E.push([p[0] - nx*we, p[1] - ny*we]);
@@ -3435,7 +3435,7 @@ const KNIFE_TYPES = {
   // the reverse grip, as in CS2: the index finger runs through the ring at the
   // top of the fist and the claw hooks out from under the little finger
   kbit: {build:makeKarambit, scale:1.18, clips:KBIT_CLIPS, viewRot:true,
-         base:{px:-0.030, py:0.095, pz:0.080, rx:1.7127, ry:-0.6155, rz:-0.6100},
+         base:{px:-0.030, py:0.110, pz:0.080, rx:1.7391, ry:-0.8132, rz:-0.5689},
          pinBase:{x:0, y:0, z:0, rx:0, ry:0},
          hand:{R:0.021, tube:0.0088, spacing:0.0190, z0:0.0, palm:0, sweep:-3.5, sx:0.90, sy:1.20, len:0.9,
                pose:{0:{closed:[Math.PI/2, -Math.PI/2, -1.0], open:[Math.PI/2, 0, 0]}},
