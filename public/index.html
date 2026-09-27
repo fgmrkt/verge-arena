@@ -912,6 +912,112 @@ function pitTexture(){
   pitTex = new THREE.CanvasTexture(c);
   return pitTex;
 }
+// ---- litter: what collects on a city floor, drawn once into eight sprites ----
+// leaves (two kinds), paper, butts and caps, an oil stain, a crushed can, gum and grit,
+// a scatter of single leaves
+let litterTex = null;
+function litterTexture(){
+  if(litterTex) return litterTex;
+  const S = 128, c = document.createElement('canvas'); c.width = S*4; c.height = S*2;
+  const g = c.getContext('2d');
+  let seed = 91;
+  const r = ()=>{ seed = (seed*16807) % 2147483647; return seed/2147483647; };
+  const leaf = (x, y, s, col)=>{
+    g.save(); g.translate(x, y); g.rotate(r()*Math.PI*2);
+    g.fillStyle = col; g.beginPath(); g.ellipse(0, 0, s, s*0.48, 0, 0, Math.PI*2); g.fill();
+    g.strokeStyle = 'rgba(40,24,10,0.55)'; g.lineWidth = 1; g.beginPath(); g.moveTo(-s, 0); g.lineTo(s*1.2, 0); g.stroke();
+    g.restore();
+  };
+  const cell = (i, draw)=>{ g.save(); g.translate((i%4)*S, Math.floor(i/4)*S); g.beginPath(); g.rect(0, 0, S, S); g.clip(); draw(); g.restore(); };
+  const LEAF = ['#5e4020','#6e4a24','#7a6230','#4e361c','#846a3a','#5a3018'];   // dry and trodden, not autumn gold
+  cell(0, ()=>{ for(let k=0;k<16;k++) leaf(24 + r()*80, 24 + r()*80, 7 + r()*7, LEAF[(r()*LEAF.length)|0]); });
+  cell(1, ()=>{ for(let k=0;k<12;k++) leaf(24 + r()*80, 24 + r()*80, 6 + r()*8, ['#6a6a2a','#7d6a2c','#5a4a20','#8e7a38'][(r()*4)|0]); });
+  cell(2, ()=>{
+    for(let k=0;k<3;k++){                                   // crumpled paper and a receipt
+      g.save(); g.translate(30 + r()*68, 30 + r()*68); g.rotate(r()*6.3);
+      g.fillStyle = ['#e8e6e0','#d8d4c8','#f0ece2'][k];
+      g.beginPath(); const n = 9; for(let i=0;i<n;i++){ const a = i/n*Math.PI*2, rr = 10 + r()*9; g.lineTo(Math.cos(a)*rr, Math.sin(a)*rr); } g.fill();
+      g.strokeStyle = 'rgba(0,0,0,0.18)'; g.lineWidth = 1; for(let i=0;i<3;i++){ g.beginPath(); g.moveTo(-8 + r()*16, -8); g.lineTo(-8 + r()*16, 8); g.stroke(); }
+      g.restore();
+    }
+    g.save(); g.translate(64, 96); g.rotate(0.5); g.fillStyle = '#f4f2ec'; g.fillRect(-6, -18, 12, 36);
+    g.fillStyle = 'rgba(0,0,0,0.25)'; for(let i=0;i<7;i++) g.fillRect(-4, -15 + i*4.5, 6 + r()*2, 1); g.restore();
+  });
+  cell(3, ()=>{
+    for(let k=0;k<7;k++){                                   // cigarette butts
+      g.save(); g.translate(18 + r()*92, 18 + r()*92); g.rotate(r()*6.3);
+      g.fillStyle = '#e9e4d8'; g.fillRect(-7, -1.6, 9, 3.2); g.fillStyle = '#c8823a'; g.fillRect(2, -1.6, 5, 3.2); g.restore();
+    }
+    for(let k=0;k<3;k++){ g.fillStyle = ['#c0c4c8','#b83a2a','#d4b020'][k]; g.beginPath(); g.arc(20 + r()*88, 20 + r()*88, 4, 0, 7); g.fill(); }
+  });
+  cell(4, ()=>{                                             // an oil stain: soft, dark, a rainbow edge
+    const gr = g.createRadialGradient(64, 64, 4, 64, 64, 56);
+    gr.addColorStop(0, 'rgba(8,8,10,0.62)'); gr.addColorStop(0.6, 'rgba(10,10,12,0.40)'); gr.addColorStop(0.85, 'rgba(40,30,60,0.18)'); gr.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = gr; g.beginPath(); for(let i=0;i<16;i++){ const a = i/16*Math.PI*2, rr = 40 + r()*20; g.lineTo(64 + Math.cos(a)*rr, 64 + Math.sin(a)*rr*0.7); } g.fill();
+  });
+  cell(5, ()=>{                                             // a crushed can and a sweet wrapper
+    g.save(); g.translate(56, 60); g.rotate(0.7); g.fillStyle = '#b8202a'; g.fillRect(-16, -8, 30, 16);
+    g.fillStyle = '#d8dadc'; g.fillRect(-16, -8, 4, 16); g.fillRect(12, -8, 4, 16); g.fillStyle = 'rgba(255,255,255,0.35)'; g.fillRect(-10, -6, 20, 3); g.restore();
+    g.save(); g.translate(92, 94); g.rotate(-0.4); g.fillStyle = '#e8b818'; g.fillRect(-10, -6, 20, 12); g.fillStyle = '#2a60b0'; g.fillRect(-10, -2, 20, 4); g.restore();
+  });
+  cell(6, ()=>{                                             // gum and grit
+    for(let k=0;k<22;k++){ g.fillStyle = r() < 0.6 ? 'rgba(20,20,22,0.55)' : 'rgba(200,196,188,0.6)'; g.beginPath(); g.arc(10 + r()*108, 10 + r()*108, 1.5 + r()*3.5, 0, 7); g.fill(); }
+  });
+  cell(7, ()=>{ for(let k=0;k<6;k++) leaf(18 + r()*92, 18 + r()*92, 5 + r()*5, LEAF[(r()*LEAF.length)|0]); });
+  litterTex = new THREE.CanvasTexture(c);
+  litterTex.anisotropy = 4;
+  return litterTex;
+}
+// scatter it: thickest in the gutters, round the trees, in alleys and at the foot of walls
+function groundLitter(def){
+  const G = def.grid;
+  if(!G || !G.n) return;
+  let seed = 7;
+  for(let i=0;i<def.name.length;i++) seed = (seed*31 + def.name.charCodeAt(i)) % 2147483647;
+  const r = ()=>{ seed = (seed*16807) % 2147483647; return seed/2147483647; };
+  const lim = def.half - 1.2, hb = G.block/2;
+  const spots = [[], [], [], [], [], [], [], []];
+  const add = (x, z, kind, size)=>{
+    if(Math.abs(x) > lim || Math.abs(z) > lim || !freeAt(x, 0.02, z, 0.22, 0.3)) return;
+    spots[kind].push([x, z, size, r()*6.28]);
+  };
+  const kinds = [0, 0, 1, 2, 3, 3, 4, 5, 6, 6, 7, 7];
+  const N = Math.round(def.half*def.half*0.45);
+  for(let k=0;k<N;k++){
+    let x = (r()*2 - 1)*lim, z = (r()*2 - 1)*lim;
+    // snap most of it into a gutter: the strip just off a kerb
+    if(r() < 0.6){
+      const i = Math.round((x - G.first)/G.pitch), j = Math.round((z - G.first)/G.pitch);
+      const bx = G.first + i*G.pitch, bz = G.first + j*G.pitch;
+      if(r() < 0.5) x = bx + (x > bx ? 1 : -1)*(hb + 0.15 + r()*0.45); else z = bz + (z > bz ? 1 : -1)*(hb + 0.15 + r()*0.45);
+    }
+    const kind = kinds[(r()*kinds.length)|0];
+    add(x, z, kind, kind === 4 ? 1.2 + r()*1.4 : 0.55 + r()*0.5);
+  }
+  // leaves drift round the foot of every street tree
+  def.boxes.forEach(b=>{
+    if(b.shape !== 'trunk') return;
+    for(let k=0;k<6;k++){ const a = r()*6.28, d = 0.9 + r()*2.2; add(b.x + Math.cos(a)*d, b.z + Math.sin(a)*d, r() < 0.7 ? 0 : 7, 0.6 + r()*0.5); }
+  });
+  const tex = litterTexture(), q = new THREE.Quaternion(), qy = new THREE.Quaternion(), flat = new THREE.Quaternion().setFromAxisAngle(new V3(1,0,0), -Math.PI/2);
+  const m = new THREE.Matrix4(), pp = new V3(), sc = new V3(), yax = new V3(0,1,0);
+  spots.forEach((list, kind)=>{
+    if(!list.length) return;
+    const geo = new THREE.PlaneBufferGeometry(1, 1), uv = geo.attributes.uv;
+    const u0 = (kind%4)/4, v0 = 1 - (Math.floor(kind/4) + 1)/2;
+    for(let i=0;i<uv.count;i++) uv.setXY(i, u0 + uv.getX(i)*0.25, v0 + uv.getY(i)*0.5);
+    const mat = new THREE.MeshLambertMaterial({map:tex, transparent:true, depthWrite:false, polygonOffset:true, polygonOffsetFactor:-4,
+                                               alphaTest:kind === 4 ? 0.02 : 0.3, opacity:kind === 4 ? 0.8 : 1});
+    const im = new THREE.InstancedMesh(geo, mat, list.length);
+    list.forEach((s, i)=>{
+      qy.setFromAxisAngle(yax, s[3]); q.copy(qy).multiply(flat);
+      pp.set(s[0], 0.016 + (i % 5)*0.0006, s[1]); sc.set(s[2], s[2], 1);
+      m.compose(pp, q, sc); im.setMatrixAt(i, m);
+    });
+    im.instanceMatrix.needsUpdate = true; im.receiveShadow = true; im.renderOrder = 1;
+    scene.add(im); world.meshes.push(im);
+  });
+}
 function makeStars(amount){
   const n = 520, arr = new Float32Array(n*3);
   let seed = 12345;
@@ -1251,6 +1357,58 @@ function facadeMaterial(baseHex, night, moss, slab, styles){
           return mix(tyre, alloy, face * step(r, 0.64));
         }
         #endif
+        #if defined(S20)
+        // style 20: plain trim (sills, lintels, quoins, cornices, cabinets): colour and a little grain, nothing more
+        if(style > 19.5 && style < 20.5) return col * (0.93 + 0.10*fnoise(vWp.xz*5.0 + vWp.y*4.0));
+        #endif
+        #if defined(S16)
+        // style 16: a solar panel. Cells in a silver grid under glass that holds the sky.
+        if(style > 15.5 && style < 16.5){
+          if(vLn.y > 0.8){
+            vec2 q = vec2(vLp.x*7.0, vLp.z*4.0);
+            float grid = 1.0 - step(0.06, min(fract(q.x), fract(q.y)));
+            vec3 cell = col * (0.85 + 0.2*fh(floor(q)));
+            vec3 V = normalize(cameraPosition - vWp), R = reflect(-V, N);
+            gEmis += skyRefl(R) * fresnel(N, V, 0.03) * 0.28;
+            return mix(cell, vec3(0.62,0.64,0.66), grid*det(0.03));
+          }
+          return col;
+        }
+        #endif
+        #if defined(S17)
+        // style 17: the fan on top of a rooftop unit, behind a round guard
+        if(style > 16.5 && style < 17.5){
+          if(vLn.y > 0.5){
+            float r = length(vLp.xz)*2.0, a = atan(vLp.z, vLp.x);
+            float ring = step(0.5, fract(r*6.0))*det(0.02);
+            float blade = step(0.62, fract(a/6.2832*5.0 + r*0.35));
+            vec3 c = mix(vec3(0.05,0.05,0.06), vec3(0.24,0.25,0.26), blade*step(0.18, r)*step(r, 0.9));
+            return mix(c, vec3(0.62,0.63,0.64), ring*0.8 + step(0.92, r));
+          }
+          return col;
+        }
+        #endif
+        #if defined(S18)
+        // style 18: steel grating, open slots you can see the ground through
+        if(style > 17.5 && style < 18.5){
+          vec2 q = vWp.xz*14.0;
+          float slot = step(0.28, fract(q.x))*step(0.2, fract(q.y*0.35));
+          return mix(col, vec3(0.012), slot*0.85*det(0.07) + 0.4*(1.0 - det(0.07)))*(abs(N.y) > 0.5 ? 1.0 : 1.2);
+        }
+        #endif
+        #if defined(S19)
+        // style 19: a skylight. An aluminium upstand and a pane of glass on top.
+        if(style > 18.5 && style < 19.5){
+          if(n.y > 0.5){
+            vec3 V = normalize(cameraPosition - vWp), R = reflect(-V, N);
+            vec2 e = abs(vLp.xz);
+            float frame = step(0.44, max(e.x, e.y)) + (1.0 - step(0.012, abs(vLp.x)));
+            gEmis += skyRefl(R) * fresnel(N, V, 0.08) * (1.0 - clamp(frame, 0.0, 1.0)) + vec3(1.0,0.82,0.55)*uNight*0.25*(1.0 - clamp(frame, 0.0, 1.0));
+            return mix(vec3(0.04,0.05,0.06), vec3(0.66,0.68,0.70), clamp(frame, 0.0, 1.0));
+          }
+          return vec3(0.62,0.64,0.66) * (0.92 + 0.08*N.y);
+        }
+        #endif
         float grain = fnoise(vWp.xz*6.0 + vWp.y*3.0);
         col *= 0.93 + 0.10*grain;
         #if defined(S0)
@@ -1273,6 +1431,8 @@ function facadeMaterial(baseHex, night, moss, slab, styles){
           return cope * (1.0 - 0.25*step(fyS, 0.12));
         }
         #endif
+        // the underside of a slab that oversails the wall: plain rendered concrete, not tar
+        if(vNw.y < -0.5) return mix(vec3(0.66,0.65,0.62), vFa.rgb*0.8, 0.3) * (0.92 + 0.10*grain);
         // roofs: tar and gravel, the joins between the sheets
         if(n.y > 0.5){
           float grav = fh(floor(vWp.xz*22.0));
@@ -1520,6 +1680,17 @@ function groundMaterial(baseHex, grid, night){
           float bandZ = step(sc.x, 3.4) * step(2.4, sc.y) * step(sc.y, 4.6);
           float zebra = max(bandX * step(0.5, fract(p.x/1.3)), bandZ * step(0.5, fract(p.y/1.3)));
           col = mix(col, vec3(0.74,0.74,0.72), zebra*0.80*float(inGrid)*wear);
+          // a stop line across the lane coming in to each crossing (they drive on the right),
+          // and parking bays marked out along the kerbs away from the corners
+          float side = sign(f.x)*sign(f.y);
+          float stopZ = step(sc.x, street*0.5) * step(abs(sc.y - 4.95), 0.16) * step(0.0, side);
+          float stopX = step(sc.y, street*0.5) * step(abs(sc.x - 4.95), 0.16) * step(0.0, -side);
+          col = mix(col, vec3(0.78,0.78,0.76), max(stopX, stopZ)*float(inGrid)*wear*0.9);
+          float kb = street*0.5 - 2.3;
+          float bayZ = step(kb, sc.x) * step(sc.x, street*0.5 - 0.2) * step(6.0, sc.y) * step(0.482, abs(fract(p.y/5.6) - 0.5));
+          float bayX = step(kb, sc.y) * step(sc.y, street*0.5 - 0.2) * step(6.0, sc.x) * step(0.482, abs(fract(p.x/5.6) - 0.5));
+          float bayL = step(abs(sc.x - kb), 0.05)*step(6.0, sc.y)*step(sc.x, street*0.5) + step(abs(sc.y - kb), 0.05)*step(6.0, sc.x)*step(sc.y, street*0.5);
+          col = mix(col, vec3(0.72,0.72,0.70), clamp(bayZ + bayX + bayL, 0.0, 1.0)*float(inGrid)*wear*0.7*det(0.05));
           // manhole covers dropped on a coarse lattice, with a ring and a grid on them
           vec2 mh = fract(p/9.0) - 0.5;
           float ml = length(mh)*9.0;
@@ -1802,6 +1973,116 @@ function fountainGeo(){
   const ng = g.toNonIndexed(); ng.computeVertexNormals();
   return shadeShape(ng, 0.82, 1.02);
 }
+// ---- street and roof furniture, assembled from parts that each carry a colour ----
+// Built at real size, then stretched into the unit cube like every other shape; the
+// box in world.js is given the same real size, so nothing is distorted.
+const kbx = (w, h, d, x, y, z, rx, rz)=>{ const g = new THREE.BoxBufferGeometry(w, h, d); if(rx) g.rotateX(rx); if(rz) g.rotateZ(rz); g.translate(x, y, z); return g; };
+const kcy = (r0, r1, h, x, y, z, seg, axis)=>{
+  const g = new THREE.CylinderBufferGeometry(r1, r0, h, seg || 12, 1);
+  if(axis === 'x') g.rotateZ(Math.PI/2); else if(axis === 'z') g.rotateX(Math.PI/2);
+  g.translate(x, y, z); return g;
+};
+function kit(parts){
+  return fitUnit(mergeGeos(parts.map(([g, c])=>{
+    const n = g.index ? g.toNonIndexed() : g;
+    const nr = n.attributes.normal, k = n.attributes.position.count, col = new Float32Array(k*3);
+    for(let i=0;i<k;i++){
+      const ny = nr.getY(i), v = ny > 0.5 ? 1.05 : (ny < -0.5 ? 0.72 : 0.92);
+      col[i*3] = c[0]*v; col[i*3+1] = c[1]*v; col[i*3+2] = c[2]*v;
+    }
+    n.setAttribute('color', new THREE.BufferAttribute(col, 3));
+    return n;
+  })));
+}
+const STEEL = [0.16,0.16,0.17], ALU = [0.72,0.74,0.76], WHITE = [1,1,1];
+// a railing: posts, rails and balusters (length along x)
+function railGeo(L, bars){
+  const P = [], H = 1.0;
+  [-1, 1].forEach(s=>P.push([kbx(0.05, H, 0.05, s*(L/2 - 0.025), 0, 0), STEEL]));
+  P.push([kbx(L, 0.045, 0.06, 0, H/2 - 0.022, 0), STEEL]);
+  P.push([kbx(L, 0.025, 0.03, 0, 0.02, 0), STEEL]);
+  P.push([kbx(L, 0.03, 0.03, 0, -H/2 + 0.06, 0), STEEL]);
+  for(let i=1;i<bars;i++) P.push([kbx(0.016, H - 0.1, 0.016, -L/2 + i*L/bars, -0.02, 0), STEEL]);
+  return kit(P);
+}
+// one flight of a fire escape: stringers, open treads and a handrail each side (rising along +x)
+function flightGeo(){
+  const run = 2.6, rise = 3.2, W = 0.62, a = Math.atan2(rise, run), len = Math.hypot(run, rise), P = [];
+  [-1, 1].forEach(s=>{
+    P.push([kbx(len, 0.16, 0.03, 0, 0, s*W/2, 0, a), STEEL]);
+    P.push([kbx(len, 0.04, 0.04, 0, 0.88, s*(W/2 + 0.01), 0, a), STEEL]);        // handrail
+    for(let i=0;i<=4;i++){ const t = i/4 - 0.5; P.push([kbx(0.025, 0.86, 0.025, t*run*0.92, t*rise*0.92 + 0.44, s*(W/2 + 0.01)), STEEL]); }
+  });
+  const steps = 13;
+  for(let i=0;i<steps;i++){
+    const t = (i + 0.5)/steps - 0.5;
+    P.push([kbx(run/steps + 0.02, 0.03, W - 0.04, t*run, t*rise + 0.04, 0), [0.20,0.20,0.21]]);
+  }
+  return kit(P);
+}
+function ladderGeo(H, rungs){
+  const P = [];
+  [-1, 1].forEach(s=>P.push([kbx(0.035, H, 0.035, s*0.2, 0, 0), STEEL]));
+  for(let i=0;i<rungs;i++) P.push([kbx(0.40, 0.025, 0.025, 0, -H/2 + (i + 0.5)*H/rungs, 0), STEEL]);
+  return kit(P);
+}
+function ventGeo(){
+  const pts = [[0.001,-0.5],[0.16,-0.5],[0.16,0.12],[0.46,0.18],[0.50,0.24],[0.24,0.44],[0.001,0.5]].map(p=>new THREE.Vector2(p[0], p[1]));
+  const g = new THREE.LatheBufferGeometry(pts, 14).toNonIndexed(); g.computeVertexNormals();
+  return kit([[g, [0.66,0.68,0.70]]]);
+}
+// a solar panel on its frame, tilted up towards -z
+function solarGeo(){
+  const P = [], t = 0.42;
+  P.push([kbx(1.70, 0.045, 1.05, 0, 0.18, 0, t), [0.10,0.14,0.28]]);
+  P.push([kbx(1.74, 0.05, 0.04, 0, 0.18 + Math.sin(t)*0.525, -Math.cos(t)*0.525, t), ALU]);
+  P.push([kbx(1.74, 0.05, 0.04, 0, 0.18 - Math.sin(t)*0.525, Math.cos(t)*0.525, t), ALU]);
+  [-0.78, 0.78].forEach(x=>{
+    P.push([kbx(0.04, 0.62, 0.04, x, -0.10, -0.42), ALU]);
+    P.push([kbx(0.04, 0.22, 0.04, x, -0.30, 0.42), ALU]);
+    P.push([kbx(0.05, 0.03, 1.00, x, -0.40, 0), ALU]);
+  });
+  return kit(P);
+}
+// a wire strung between two walls, sagging under its own weight (along x)
+function wireGeo(){
+  const L = 10, sag = 1, pts = [];
+  for(let i=0;i<=20;i++){ const t = i/20; pts.push(new V3(-L/2 + t*L, -sag*4*t*(1 - t), 0)); }
+  const g = new THREE.TubeBufferGeometry(new THREE.CatmullRomCurve3(pts), 24, 0.02, 4, false);
+  return kit([[g, [0.07,0.07,0.08]]]);
+}
+function bollardGeo(){
+  const pts = [[0.001,-0.5],[0.5,-0.5],[0.5,0.26],[0.44,0.38],[0.28,0.47],[0.001,0.5]].map(p=>new THREE.Vector2(p[0], p[1]));
+  const g = new THREE.LatheBufferGeometry(pts, 9).toNonIndexed(); g.computeVertexNormals();
+  const band = kcy(0.52, 0.52, 0.10, 0, 0.12, 0, 9);
+  return kit([[g, WHITE], [band, [3.0,3.0,2.6]]]);            // the band stays bright whatever the tint
+}
+function meterGeo(){
+  return kit([[kcy(0.03, 0.03, 1.0, 0, 0.5, 0, 8), [0.22,0.23,0.24]], [kbx(0.17, 0.30, 0.12, 0, 1.15, 0), [0.62,0.64,0.66]],
+              [kbx(0.12, 0.08, 0.01, 0, 1.19, 0.062), [0.05,0.06,0.07]], [kcy(0.09, 0.09, 0.05, 0, 1.325, 0, 12), [0.62,0.64,0.66]]]);
+}
+function signGeo(){
+  const G = [0.10,0.40,0.22];
+  return kit([[kcy(0.035, 0.035, 2.9, 0, 1.45, 0, 8), [0.36,0.37,0.38]], [kbx(0.80, 0.17, 0.02, 0.30, 2.74, 0), G],
+              [kbx(0.02, 0.17, 0.80, 0, 2.52, 0.30), G], [kcy(0.05, 0.03, 0.06, 0, 2.93, 0, 8), [0.36,0.37,0.38]]]);
+}
+function newsboxGeo(){
+  const P = [[kbx(0.50, 0.58, 0.44, 0, 0.66, 0), WHITE], [kbx(0.40, 0.26, 0.01, 0, 0.72, 0.221), [0.06,0.07,0.08]],
+             [kbx(0.52, 0.04, 0.46, 0, 0.97, 0), WHITE], [kbx(0.08, 0.10, 0.02, 0.15, 0.48, 0.225), [0.55,0.56,0.58]]];
+  [[-1,-1],[1,-1],[-1,1],[1,1]].forEach(([a,b])=>P.push([kbx(0.03, 0.37, 0.03, a*0.21, 0.185, b*0.18), STEEL]));
+  return kit(P);
+}
+// a wheeled skip with two lids, flared towards the top
+function dumpsterGeo(){
+  const g = new THREE.BoxBufferGeometry(1.7, 1.1, 1.1, 1, 1, 1), p = g.attributes.position;
+  for(let i=0;i<p.count;i++) if(p.getY(i) < 0) p.setXYZ(i, p.getX(i)*0.92, p.getY(i), p.getZ(i)*0.84);
+  g.translate(0, 0.66, 0);
+  const P = [[g, WHITE]];
+  [-1, 1].forEach(s=>P.push([kbx(0.84, 0.05, 1.16, s*0.43, 1.25, 0.02, 0.06, 0), [0.10,0.11,0.11]]));
+  [[-1,-1],[1,-1],[-1,1],[1,1]].forEach(([a,b])=>P.push([kcy(0.06, 0.06, 0.05, a*0.66, 0.06, b*0.36, 10, 'z'), [0.05,0.05,0.05]]));
+  [-1, 1].forEach(s=>P.push([kbx(1.62, 0.06, 0.05, 0, 0.95, s*0.575), [0.9,0.9,0.9]]));   // lifting rails
+  return kit(P);
+}
 let SHAPES = null;
 function shapeGeos(){
   if(SHAPES) return SHAPES;
@@ -1827,7 +2108,22 @@ function shapeGeos(){
     wheel:()=>[wheelGeo()],
     basin:()=>[basinGeo()],
     fountain:()=>[fountainGeo()],
-    crate:()=>[UNIT]
+    crate:()=>[UNIT],
+    rail: ()=>[railGeo(3.0, 18)],
+    railS:()=>[railGeo(1.0, 6)],
+    flight:()=>[flightGeo()],
+    ladder:()=>[ladderGeo(2.4, 8)],
+    vent: ()=>[ventGeo()],
+    pipeH:()=>[cylGeo(0.5, 0.5, 12).rotateZ(Math.PI/2)],
+    solar:()=>[solarGeo()],
+    fan:  ()=>[cylGeo(0.5, 0.5, 20)],
+    wire: ()=>[wireGeo()],
+    bollard:()=>[bollardGeo()],
+    meter:()=>[meterGeo()],
+    sign: ()=>[signGeo()],
+    newsbox:()=>[newsboxGeo()],
+    dumpster:()=>[dumpsterGeo()],
+    bag:  ()=>[blobGeo(131, 0.30, 0.42), blobGeo(149, 0.30, 0.42), blobGeo(163, 0.30, 0.42)]
   };
   SHAPES = {};
   // a shape that cannot be built (an odd browser) simply stays the box it was
@@ -1835,11 +2131,13 @@ function shapeGeos(){
   return SHAPES;
 }
 // shapes whose long axis follows the box: turned a quarter when the box runs along z
-const SHAPE_TURN = {carBody:1, cabin:1, wheel:1};
+const SHAPE_TURN = {carBody:1, cabin:1, wheel:1, rail:1, railS:1, flight:1, ladder:1, pipeH:1, wire:1, dumpster:1};
 // a surface of their own in the facade shader
-const SHAPE_STYLE = {trunk:12, carBody:11, cabin:10, wheel:13, basin:14, fountain:14, crate:15};
+const SHAPE_STYLE = {trunk:12, carBody:11, cabin:10, wheel:13, basin:14, fountain:14, crate:15, solar:16, fan:17};
 // seen from both sides
 const SHAPE_DOUBLE = {tuft:1, dish:1};
+// street furniture small enough to go without a shadow, and to leave out on the lightest setting
+const TINY_PROP = {bollard:1, meter:1, newsbox:1, bag:1, vent:1, pipeH:1, sign:1, fan:1, wire:1};
 
 function buildWorld(def){
   clearWorld();
@@ -1890,17 +2188,22 @@ function buildWorld(def){
   // one instanced mesh per palette slot and shape; every instance carries its own facade parameters
   const SH = shapeGeos();
   const groups = new Map();
+  const light = QUALITY[S.quality].fx < 1;
   def.boxes.forEach((b, bi)=>{
-    let key = String(b.c||0);
+    // key: palette slot | shape | variant | 1 for architectural trim (drawn apart so it can skip the shadow pass)
+    let key = String(b.c||0) + '||0|' + (b.see ? 1 : 0);
     if(b.shape && SH[b.shape]){
       const vars = SH[b.shape];
-      key += '|' + b.shape + '|' + (vars.length > 1 ? Math.floor(vhash3(bi, 17, 5, 1)*vars.length) : 0);
+      key = String(b.c||0) + '|' + b.shape + '|' + (vars.length > 1 ? Math.floor(vhash3(bi, 17, 5, 1)*vars.length) : 0) + '|0';
     }
-    if(!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(b);
+    // on the lightest setting the smallest street furniture and the stone trim are left out altogether
+    const skip = light && b.see && (TINY_PROP[b.shape] || (!b.shape && b.style === 20));
+    if(!skip && !groups.has(key)) groups.set(key, []);
+    if(!skip) groups.get(key).push(b);
     if(b.deco){
-      // poles, trees and signs block the view without blocking movement
-      if(b.h >= 1.6 && Math.abs(b.x) < def.half+2 && Math.abs(b.z) < def.half+2){
+      // poles, trees and signs block the view without blocking movement (architectural
+      // detail marked 'see' is too thin or too high up to hide anyone)
+      if(b.h >= 1.6 && !b.see && Math.abs(b.x) < def.half+2 && Math.abs(b.z) < def.half+2){
         world.sight.push({mx:b.x-b.w/2, my:b.y,     mz:b.z-b.d/2,
                           Mx:b.x+b.w/2, My:b.y+b.h, Mz:b.z+b.d/2});
       }
@@ -1914,7 +2217,7 @@ function buildWorld(def){
   const m4 = new THREE.Matrix4(), q = new THREE.Quaternion(), pos = new V3(), scl = new V3(), ax = new V3(0,1,0);
   groups.forEach((list, key)=>{
     if(!list.length) return;
-    const parts = key.split('|'), i = +parts[0], shape = parts[1], vi = +(parts[2] || 0);
+    const parts = key.split('|'), i = +parts[0], shape = parts[1] || undefined, vi = +(parts[2] || 0), trim = parts[3] === '1';
     const geo = shape ? SH[shape][vi].clone() : UNIT.clone();
     const fa = new Float32Array(list.length*4), fb = new Float32Array(list.length*4);
     const cs = def.classStyle ? def.classStyle[i] : undefined;
@@ -1927,6 +2230,7 @@ function buildWorld(def){
     const mat = facadeMaterial(def.palette[i], T.night, def.voidBelow ? 1 : 0, !def.voidBelow && i === 2 && !shape, styles);
     if(shape && SHAPE_DOUBLE[shape]) mat.side = THREE.DoubleSide;
     const im = new THREE.InstancedMesh(geo, mat, list.length);
+    im.userData.group = key;
     list.forEach((b,k)=>{
       let ry = b.ry||0, sx = b.w, sz = b.d;
       // a car or wheel parked along z: turn the shape a quarter (nose to +z) rather than squash it
@@ -1946,7 +2250,8 @@ function buildWorld(def){
     geo.setAttribute('aFa', new THREE.InstancedBufferAttribute(fa,4));
     geo.setAttribute('aFb', new THREE.InstancedBufferAttribute(fb,4));
     im.instanceMatrix.needsUpdate = true;
-    im.castShadow = !(shape === 'tuft' || shape === 'ball'); im.receiveShadow = true;
+    // grass, bulbs, wires, small props and stone trim are too fine for the shadow map to resolve
+    im.castShadow = !(trim || shape === 'tuft' || shape === 'ball' || shape === 'wire' || TINY_PROP[shape]); im.receiveShadow = true;
     scene.add(im); world.meshes.push(im);
   });
 
@@ -1955,13 +2260,13 @@ function buildWorld(def){
   try {
     const gy = world.navY - 0.05, list = [];
     def.boxes.forEach(b=>{
-      if(b.shape === 'tuft' || b.shape === 'ball' || b.shape === 'wheel' || b.shape === 'crown' || b.style === 5 || b.style === 6) return;
+      if(b.noao || b.shape === 'tuft' || b.shape === 'ball' || b.shape === 'wheel' || b.shape === 'crown' || b.style === 5 || b.style === 6) return;
       const onGround = Math.abs(b.y - gy) < 0.05 || (b.shape === 'carBody' && Math.abs(b.y - 0.32 - gy) < 0.05);
       if(!onGround || b.h < 0.25 || Math.max(b.w, b.d) > 60) return;
       if(Math.abs(b.x) > def.half + 3 || Math.abs(b.z) > def.half + 3) return;
       list.push(b);
     });
-    const ROUND = {cyl:1, pole:1, cone1:1, trunk:1, bush:1, rock:1, stone:1, fountain:1, basin:0};
+    const ROUND = {cyl:1, pole:1, cone1:1, trunk:1, bush:1, rock:1, stone:1, fountain:1, basin:0, bollard:1, bag:1, meter:1, sign:1};
     [false, true].forEach(round=>{
       const part = list.filter(b=>!!ROUND[b.shape] === round);
       if(!part.length) return;
@@ -1993,6 +2298,7 @@ function buildWorld(def){
       im.instanceMatrix.needsUpdate = true; im.receiveShadow = true;
       scene.add(im); world.meshes.push(im);
     }
+    if(!def.voidBelow && QUALITY[S.quality].fx >= 1) groundLitter(def);
     // the island's turf: clumps of grass scattered over every open patch of it
     if(def.voidBelow){
       const SH2 = shapeGeos(), cells = def.boxes.filter(b=>b.style === 7);

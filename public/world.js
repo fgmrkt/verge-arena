@@ -129,7 +129,7 @@ function cityMap(o){
     buildings.push(b); return buildings.length-1;
   }
   const tag = (i0,bid)=>{ for(let i=i0;i<s.length;i++) if(s[i].bid===undefined) s[i].bid=bid; };
-  const foot = [], crates = [];          // remembered for street dressing at the end
+  const foot = [], crates = [], alleys = [];   // remembered for street dressing at the end
 
   // the walls around the district are buildings too, so the edge reads as more city
   // style 4 is a plain facade whose street level carries shutters, posters and tags
@@ -153,6 +153,7 @@ function cityMap(o){
     house(s, cx, cz, bw, bd, 4.1, k, 0, 2);                  // enterable ground floor, dark ceiling slab
     let topY = 4.6, tw = bw+1.4, td = bd+1.4, tx = cx, tz = cz;
     let storeyTop = 4.6, storeyOut = 0.0;      // top of the block balconies can hang on, and how far it juts out
+    let upper = null;                          // a stepped building's set-back top block, for the detail pass
     if(floors > 1){
       const stepped = floors >= 3 && R() < .5;
       const h2 = stepped ? 7.3 : floors*3.2 + 0.9;
@@ -171,6 +172,7 @@ function cityMap(o){
         s.push(D(cx, topY, cz+td/2-0.15, tw, 0.5, 0.3, 0));
         s.push(D(cx-tw/2+0.15, topY, cz, 0.3, 0.5, td, 0));
         s.push(D(cx+tw/2-0.15, topY, cz, 0.3, 0.5, td, 0));
+        upper = {x:tx, z:tz, w:sw, d:sd, y0:topY, y1:h3, lowTop:topY, lowW:tw, lowD:td};
         topY = h3+0.4; tw = sw+0.8; td = sd+0.8;
       }
     }
@@ -280,7 +282,8 @@ function cityMap(o){
         }
       }
     });
-    foot.push({cx, cz, bw, bd, floors, k:k.slice(), storeyTop, style:st, stair:!!(opts && opts.stair)});
+    foot.push({cx, cz, bw, bd, floors, k:k.slice(), storeyTop, style:st, stair:!!(opts && opts.stair),
+               bid, topY, tx, tz, tw, td, upper});
     if(opts && opts.stair){
       const f = roofStair(s, cx, cz, bw, 4.1, R);
       claim(f.x, f.z, f.w, f.d);                          // the stair owns its patch of street
@@ -324,16 +327,18 @@ function cityMap(o){
           const k = [kinds(),kinds(),kinds(),kinds()]; k[idx===0?3:2] = 'door';
           building(cx+sg*(dw/2+alley/2), cz, dw, d, pick(o.floors), k);
         });
-        s.push(B(cx,0,cz+d*0.32, 1.7,1.3,1.1, 3, {tint:[0.15,0.35,0.22]}));
+        s.push(B(cx,0,cz+d*0.32, 1.7,1.3,1.1, 3, {tint:[0.15,0.35,0.22], shape:'dumpster'}));
         claim(cx, cz+d*0.32, 2.3, 1.7);
+        alleys.push({x:cx, z:cz, alongX:false, w:alley, len:d, bin:[cx, cz+d*0.32]});
       } else {
         const dd = (d-alley)/2;
         [-1,1].forEach((sg,idx)=>{
           const k = [kinds(),kinds(),kinds(),kinds()]; k[idx===0?1:0] = 'door';
           building(cx, cz+sg*(dd/2+alley/2), w, dd, pick(o.floors), k);
         });
-        s.push(B(cx+w*0.32,0,cz, 1.1,1.3,1.7, 3, {tint:[0.15,0.35,0.22]}));
+        s.push(B(cx+w*0.32,0,cz, 1.1,1.3,1.7, 3, {tint:[0.15,0.35,0.22], shape:'dumpster'}));
         claim(cx+w*0.32, cz, 1.7, 2.3);
+        alleys.push({x:cx, z:cz, alongX:true, w:alley, len:w, bin:[cx+w*0.32, cz]});
       }
     }
     // trees on the sidewalk of some blocks
@@ -460,6 +465,7 @@ function cityMap(o){
     s.push(D(Math.cos(a)*rr, fl*3.2+0.5, Math.sin(a)*rr, bw+0.6, 0.4, bw+0.6, 2));
   }
   dressStreets(s, foot, crates, o.seed, D, NEON);
+  detailCity(s, {foot, alleys, buildings, half, seed:o.seed, grid:{first, pitch, block, n, street}, lights});
   return {name:o.name, half:half, sky:o.sky, skyTop:o.skyTop, skyBot:o.skyBot, ground:o.ground,
           fogNear:o.fogNear, boxes:s, buildings:buildings, spawns:[], lights:lights,
           grid:{first:first, pitch:pitch, block:block, n:n, inset:inset},
@@ -612,6 +618,412 @@ function dressStreets(s, foot, crates, seed, D, NEON){
   }
 }
 
+// ---------------------------------------------------------------------------
+// Architectural and street detail. Everything here is decoration: none of it
+// collides, none of it hides anyone from a bot (see: 1), and it rolls its own
+// dice after the rest of the city is laid out, so solids, spawns and the
+// server's copy of every map are exactly what they were without it.
+// ---------------------------------------------------------------------------
+// a coarse grid over the boxes so "is this spot free?" does not scan the whole city
+function boxIndex(list){
+  const C = 3, cells = new Map(), big = [];
+  let stamp = 0;
+  const add = b=>{
+    const i0 = Math.floor((b.x - b.w/2)/C), i1 = Math.floor((b.x + b.w/2)/C);
+    const j0 = Math.floor((b.z - b.d/2)/C), j1 = Math.floor((b.z + b.d/2)/C);
+    if((i1 - i0 + 1)*(j1 - j0 + 1) > 64){ big.push(b); return; }
+    for(let i=i0;i<=i1;i++) for(let j=j0;j<=j1;j++){
+      const k = i*65536 + j; let a = cells.get(k); if(!a){ a = []; cells.set(k, a); } a.push(b);
+    }
+  };
+  list.forEach(add);
+  const hit = (b, x0,z0,x1,z1,y0,y1)=> y0 < b.y+b.h && y1 > b.y && x0 < b.x+b.w/2 && x1 > b.x-b.w/2 && z0 < b.z+b.d/2 && z1 > b.z-b.d/2;
+  return {
+    add,
+    free(x0,z0,x1,z1,y0,y1){
+      for(let i=0;i<big.length;i++) if(hit(big[i], x0,z0,x1,z1,y0,y1)) return false;
+      stamp++;
+      for(let i=Math.floor(x0/C);i<=Math.floor(x1/C);i++) for(let j=Math.floor(z0/C);j<=Math.floor(z1/C);j++){
+        const a = cells.get(i*65536 + j); if(!a) continue;
+        for(let n=0;n<a.length;n++){ const b = a[n]; if(b._st === stamp) continue; b._st = stamp; if(hit(b, x0,z0,x1,z1,y0,y1)) return false; }
+      }
+      return true;
+    }
+  };
+}
+function detailCity(s, o){
+  const P = rng((o.seed*131 + 977) >>> 0);
+  const pick = a => a[(P()*a.length)|0];
+  const IX = boxIndex(s);
+  // every detail box: decoration, never a sightline blocker, no contact shadow of its own
+  const put = (x,y,z,w,h,d,c,ex)=>{
+    const b = B(x,y,z,w,h,d,c); b.deco = true; b.see = 1; b.noao = 1;
+    if(ex) for(const k in ex) b[k] = ex[k];
+    if(b.shape === undefined && b.style === undefined) b.style = 20;          // plain dressed stone or paint: a cheap surface
+    s.push(b); IX.add(b); return b;
+  };
+  const STONE = [0.80,0.78,0.73], STONE_D = [0.70,0.68,0.64];
+  const stoneOf = bld => bld.style === 2 ? STONE : [Math.min(1, bld.tint[0]*1.06), Math.min(1, bld.tint[1]*1.05), Math.min(1, bld.tint[2]*1.03)];
+  // a box standing out from a wall. face: 0 north (-z), 1 south (+z), 2 west (-x), 3 east (+x);
+  // (fx, fz) is a point on the face, `a` runs along it, `out` is how far it stands proud
+  const FACES = [[0,-1],[0,1],[-1,0],[1,0]];
+  const onFace = (fi, fx, fz, a, y, along, h, out, inset, c, ex)=>{
+    const [dx, dz] = FACES[fi], dep = out + inset;
+    const x = fx + dx*(out - dep/2) + (dz ? a : 0), z = fz + dz*(out - dep/2) + (dx ? a : 0);
+    return put(x, y, z, dx ? dep : along, h, dz ? dep : along, c, ex);
+  };
+
+  // ---- windows made solid: a stone sill under each painted window and a lintel over it.
+  // The facade shader lays windows on a grid (u = x or z along the face, floors 3.2 m,
+  // column width winW, offset seed); the same grid here puts the stone exactly on them.
+  function windowStone(bld, fi, fx, fz, u0, u1, y0, y1, tint){
+    if(bld.style === 3) return;                                  // curtain wall: no stonework
+    const W = bld.winW, sd = bld.seed, hw = 0.26*W;
+    const top = Math.min(y1, bld.hmax);
+    const c0 = Math.ceil(u0/W + sd - 0.5), c1 = Math.floor(u1/W + sd - 0.5);
+    for(let ci=c0; ci<=c1; ci++){
+      const uc = (ci + 0.5 - sd)*W;
+      if(uc - hw < u0 + 0.25 || uc + hw > u1 - 0.25) continue;
+      const a = uc - (fi < 2 ? fx : fz);
+      for(let fl=1; fl<8; fl++){
+        const v0 = fl*3.2 + 1.088, v1 = fl*3.2 + 2.496;
+        if(v0 > top) break;
+        if(v0 - 0.26 >= y0 + 0.02) onFace(fi, fx, fz, a, v0 - 0.26, 2*hw + 0.20, 0.08, 0.13, 0.04, 3, {tint});
+        if(v1 + 0.24 <= top - 0.05 && v1 >= y0 + 0.3) onFace(fi, fx, fz, a, v1 + 0.11, 2*hw + 0.16, 0.13, 0.07, 0.04, 3, {tint});
+      }
+    }
+  }
+  // the four faces of a block [x0,x1] x [z0,z1] as (face, point on it, u range)
+  const faces = (x0,x1,z0,z1)=>[[0, (x0+x1)/2, z0, x0, x1], [1, (x0+x1)/2, z1, x0, x1], [2, x0, (z0+z1)/2, z0, z1], [3, x1, (z0+z1)/2, z0, z1]];
+  // quoins: dressed stones up each corner, long and short in turn
+  function quoins(x0,x1,z0,z1,y0,y1,tint){
+    [[x0,z0,-1,-1],[x1,z0,1,-1],[x0,z1,-1,1],[x1,z1,1,1]].forEach(([X,Z,sx,sz])=>{
+      for(let y=y0 + 0.04, k=0; y + 0.36 <= y1; y += 0.42, k++){
+        const a = k%2 ? 0.30 : 0.56, b = k%2 ? 0.56 : 0.30, p = 0.035;
+        put(X - sx*(a - p)/2, y, Z - sz*(b - p)/2, a + p, 0.36, b + p, 3, {tint});
+      }
+    });
+  }
+  // a moulded band round a block, just under its roof slab
+  // four strips, not one slab: a box as big as the building would have its top and bottom
+  // drawn right across the inside of it for nothing
+  function cornice(x0,x1,z0,z1,y,tint){
+    const dim = [tint[0]*0.9, tint[1]*0.9, tint[2]*0.9];
+    faces(x0,x1,z0,z1).forEach(([fi, fx, fz, u0, u1])=>{
+      const along = u1 - u0;
+      onFace(fi, fx, fz, 0, y, along + (fi < 2 ? 0.26 : 0), 0.24, 0.13, 0.12, 3, {tint});
+      onFace(fi, fx, fz, 0, y - 0.11, along + (fi < 2 ? 0.12 : 0), 0.08, 0.06, 0.12, 3, {tint:dim});
+    });
+  }
+  // stone caps along the top of a parapet
+  function copings(x, z, w, d, y){
+    const T = [0.74,0.73,0.70];
+    put(x, y, z - d/2 + 0.15, w + 0.08, 0.07, 0.44, 3, {tint:T});
+    put(x, y, z + d/2 - 0.15, w + 0.08, 0.07, 0.44, 3, {tint:T});
+    put(x - w/2 + 0.15, y, z, 0.44, 0.07, d - 0.2, 3, {tint:T});
+    put(x + w/2 - 0.15, y, z, 0.44, 0.07, d - 0.2, 3, {tint:T});
+  }
+
+  o.foot.forEach(f=>{
+    const bld = o.buildings[f.bid], st = bld.style, tint = stoneOf(bld);
+    const classic = st === 1 || st === 2;
+    // ---- ground floor: a plinth round the base, sills on the shop windows, frames round the doors
+    const gx0 = f.cx - f.bw/2 - 0.35, gx1 = f.cx + f.bw/2 + 0.35, gz0 = f.cz - f.bd/2 - 0.35, gz1 = f.cz + f.bd/2 + 0.35;
+    faces(gx0, gx1, gz0, gz1).forEach(([fi, fx, fz, u0, u1])=>{
+      const len = u1 - u0, kind = f.k[fi];
+      if(f.stair && fi === 3) return;
+      const plinth = (a, L)=>onFace(fi, fx, fz, a, 0, L, 0.42, 0.05, 0.03, 3, {tint:STONE_D});
+      if(kind === 'door'){
+        const side = (len - 3.2)/2;
+        plinth(-(1.6 + side/2), side); plinth(1.6 + side/2, side);
+        [-1, 1].forEach(sg=>onFace(fi, fx, fz, sg*1.67, 0, 0.16, 2.62, 0.07, 0.03, 3, {tint}));    // jambs
+        onFace(fi, fx, fz, 0, 2.50, 3.50, 0.16, 0.08, 0.03, 3, {tint});                            // head
+      } else {
+        plinth(0, len);
+        if(kind === 'window'){
+          onFace(fi, fx, fz, 0, 1.12, len, 0.07, 0.10, 0.36, 3, {tint:STONE});                    // sill across the opening
+          onFace(fi, fx, fz, 0, 2.35, len, 0.10, 0.06, 0.03, 3, {tint});                          // head over it
+        }
+      }
+    });
+    if(classic && P() < 0.7) quoins(gx0, gx1, gz0, gz1, 0.42, 4.1, tint);
+    // ---- the storeys, and a stepped building's set-back top
+    const blocks = [];
+    if(f.floors > 1) blocks.push([f.cx - (f.bw+0.9)/2, f.cx + (f.bw+0.9)/2, f.cz - (f.bd+0.9)/2, f.cz + (f.bd+0.9)/2, 4.6, f.storeyTop]);
+    if(f.upper) blocks.push([f.upper.x - f.upper.w/2, f.upper.x + f.upper.w/2, f.upper.z - f.upper.d/2, f.upper.z + f.upper.d/2, f.upper.y0, f.upper.y1]);
+    blocks.forEach(([x0,x1,z0,z1,y0,y1], bi)=>{
+      faces(x0,x1,z0,z1).forEach(([fi, fx, fz, u0, u1])=>windowStone(bld, fi, fx, fz, u0, u1, y0, y1, tint));
+      if(st !== 3) cornice(x0, x1, z0, z1, y1 - 0.26, tint);
+      if(classic && P() < 0.6) quoins(x0, x1, z0, z1, y0 + 0.05, y1 - 0.4, tint);
+    });
+    // ---- copings on every parapet
+    copings(f.tx, f.tz, f.tw, f.td, f.topY + 0.55);
+    if(f.upper) copings(f.cx, f.cz, f.upper.lowW, f.upper.lowD, f.upper.lowTop + 0.5);
+  });
+
+  // ---- a box laid against a face, from n0 to n1 metres out from it
+  const faceBox = (fi, fx, fz, a, n0, n1, y, along, h, c, ex)=>{
+    const [dx, dz] = FACES[fi], dep = n1 - n0, mid = (n0 + n1)/2;
+    return put(fx + dx*mid + (dz ? a : 0), y, fz + dz*mid + (dx ? a : 0), dx ? dep : along, h, dz ? dep : along, c, ex);
+  };
+  const IRON = [0.16,0.16,0.17];
+  // ---- fire escapes: grated landings on each storey, a flight between them, a drop ladder
+  o.foot.forEach(f=>{
+    if(f.floors < 2 || o.buildings[f.bid].style === 3 || P() > 0.6) return;
+    const levels = [];
+    for(let y=4.6; y + 1.3 <= f.storeyTop; y += 3.2) levels.push(y);
+    if(!levels.length) return;
+    const order = [0,1,2,3].map(i=>[i, P()]).sort((p, q)=>p[1] - q[1]).map(p=>p[0]);
+    for(let oi=0; oi<4; oi++){
+      const fi = order[oi];
+      if(f.stair && fi === 3) continue;
+      const [dx, dz] = FACES[fi];
+      const len = dx ? f.bd + 0.9 : f.bw + 0.9;
+      if(len < 6.5) continue;
+      const L = 3.0, Dp = 1.1, fx = f.cx + dx*(f.bw + 0.9)/2, fz = f.cz + dz*(f.bd + 0.9)/2;
+      const a = (P() - 0.5)*(len - L - 2.0);
+      const topL = levels[levels.length - 1];
+      // the cage from clear of the slab edge and the stonework out to its rail, above the ground floor;
+      // then the strip the drop ladder hangs in, which has to miss awnings and signs
+      const zone = (a0, a1, n0, n1, y0, y1)=>{
+        const p0 = [fx + dx*n0 + (dz ? a0 : 0), fz + dz*n0 + (dx ? a0 : 0)], p1 = [fx + dx*n1 + (dz ? a1 : 0), fz + dz*n1 + (dx ? a1 : 0)];
+        return IX.free(Math.min(p0[0], p1[0]), Math.min(p0[1], p1[1]), Math.max(p0[0], p1[0]), Math.max(p0[1], p1[1]), y0, y1);
+      };
+      if(!zone(a - L/2 - 0.1, a + L/2 + 0.1, 0.30, Dp + 0.1, 4.62, topL + 1.3)) continue;
+      if(!zone(a + L/2 - 0.75, a + L/2 - 0.15, Dp - 0.4, Dp - 0.15, 2.2, 4.6)) continue;
+      levels.forEach((y, li)=>{
+        faceBox(fi, fx, fz, a, 0.02, Dp, y, L, 0.07, 3, {tint:IRON, style:18});                         // landing
+        faceBox(fi, fx, fz, a, Dp - 0.06, Dp, y + 0.07, L, 1.0, 3, {tint:[1,1,1], shape:'rail'});        // front rail
+        [-1, 1].forEach(sg=>faceBox(fi, fx, fz, a + sg*(L/2 - 0.03), 0.02, Dp - 0.06, y + 0.07, 0.06, 1.0, 3,
+                                     {tint:[1,1,1], shape:'railS'}));                                     // end rails
+        [-1, 1].forEach(sg=>faceBox(fi, fx, fz, a + sg*(L/2 - 0.25), 0.02, Dp*0.8, y - 0.42, 0.05, 0.42, 3, {tint:IRON}));   // brackets
+        if(li < levels.length - 1){
+          // a flight up to the next landing, along the outer half, climbing the other way each time
+          const up = li % 2 ? -1 : 1;
+          // the flight climbs along its own +x; turning it round sends it up the other way
+          faceBox(fi, fx, fz, a, Dp*0.40, Dp - 0.08, y + 0.07, 2.6, 3.2 + 0.9, 3, {tint:[1,1,1], shape:'flight', ry:up > 0 ? 0 : Math.PI});
+        }
+      });
+      // the drop ladder, hooked up under the first landing, and one on to the roof from the last
+      faceBox(fi, fx, fz, a + L/2 - 0.45, Dp - 0.30, Dp - 0.25, levels[0] - 2.25, 0.45, 2.3, 3, {tint:[1,1,1], shape:'ladder'});
+      if(f.storeyTop - topL > 1.2) faceBox(fi, fx, fz, a - L/2 + 0.45, 0.30, 0.35, topL + 0.07, 0.45, f.storeyTop + 0.9 - topL, 3, {tint:[1,1,1], shape:'ladder'});
+      break;
+    }
+  });
+
+  // ---- roofs: vents, a skylight, a rooftop unit with its fan, pipe runs, solar panels
+  const roofFree = (x, z, w, d, y, h)=>IX.free(x - w/2 - 0.15, z - d/2 - 0.15, x + w/2 + 0.15, z + d/2 + 0.15, y + 0.01, y + h);
+  const onRoof = (f, w, d, h, tries)=>{
+    const y = f.topY;
+    for(let t=0; t<(tries || 10); t++){
+      const x = f.tx + (P() - 0.5)*(f.tw - w - 1.2), z = f.tz + (P() - 0.5)*(f.td - d - 1.2);
+      if(roofFree(x, z, w, d, y, h)) return [x, y, z];
+    }
+    return null;
+  };
+  o.foot.forEach(f=>{
+    if(f.tw < 5 || f.td < 5) return;
+    for(let v=0, nv = 1 + ((P()*3)|0); v<nv; v++){
+      const p = onRoof(f, 0.42, 0.42, 0.6);
+      if(p) put(p[0], p[1], p[2], 0.42, 0.58, 0.42, 3, {tint:[1,1,1], shape:'vent'});
+    }
+    if(P() < 0.38){
+      const r = P() < 0.5, w = r ? 1.9 : 1.2, d = r ? 1.2 : 1.9;
+      const p = onRoof(f, w, d, 0.5);
+      if(p) put(p[0], p[1], p[2], w, 0.42, d, 3, {tint:[1,1,1], style:19});
+    }
+    if(P() < 0.45){
+      const p = onRoof(f, 1.6, 1.15, 1.2);
+      if(p){
+        put(p[0], p[1], p[2], 1.6, 0.95, 1.15, 3, {tint:[0.74,0.75,0.74]});
+        put(p[0] + 0.25, p[1] + 0.95, p[2], 0.82, 0.07, 0.82, 3, {tint:[1,1,1], shape:'fan'});
+        put(p[0] - 0.62, p[1] + 0.25, p[2], 0.08, 0.5, 0.9, 3, {tint:[0.34,0.35,0.36]});                  // louvred side
+      }
+    }
+    if(P() < 0.35){
+      const along = P() < 0.5, L = 2.5 + P()*3.0;
+      const p = onRoof(f, along ? L : 0.4, along ? 0.4 : L, 0.5);
+      if(p){
+        put(p[0], p[1] + 0.26, p[2], along ? L : 0.15, 0.15, along ? 0.15 : L, 3, {tint:[0.60,0.62,0.63], shape:'pipeH'});
+        for(let k=0;k<3;k++){
+          const t = (k/2 - 0.5)*(L - 0.4);
+          put(p[0] + (along ? t : 0), p[1], p[2] + (along ? 0 : t), 0.18, 0.26, 0.18, 3, {tint:[0.30,0.30,0.31]});
+        }
+      }
+    }
+    if(P() < 0.28 && f.tw > 8 && f.td > 8){
+      // an array of panels in rows, all facing the same way
+      const cols = 2 + ((P()*2)|0), rows = 2;
+      const W = cols*1.8, D = rows*1.5;
+      const p = onRoof(f, W, D, 1.0, 8);
+      if(p){
+        const face = P() < 0.5 ? 0 : Math.PI;
+        for(let i=0;i<cols;i++) for(let j=0;j<rows;j++)
+          put(p[0] - W/2 + 0.9 + i*1.8, p[1], p[2] - D/2 + 0.75 + j*1.5, 1.74, 0.84, 1.0, 3, {tint:[1,1,1], shape:'solar', ry:face});
+      }
+    }
+  });
+
+  // ---- the street: bollards, signs, meters, cabinets and news boxes along the kerbs
+  const G = o.grid, hb = G.block/2;
+  const ground = (x, z, w, d, h, pad)=>{ const p = pad || 0.15; return IX.free(x - w/2 - p, z - d/2 - p, x + w/2 + p, z + d/2 + p, 0.02, h); };
+  const NEWS = [[0.16,0.34,0.62],[0.72,0.14,0.16],[0.92,0.72,0.12],[0.20,0.46,0.30]];
+  const CAB  = [[0.30,0.38,0.32],[0.55,0.57,0.58],[0.34,0.36,0.40]];
+  for(let i=0;i<G.n;i++) for(let j=0;j<G.n;j++){
+    const bx = G.first + i*G.pitch, bz = G.first + j*G.pitch;
+    // a kerb point: side 0..3 (-z, +z, -x, +x), t along the edge from -1 to 1, `inset` back from the kerb line
+    const kerb = (side, t, inset)=>{
+      const [dx, dz] = FACES[side];
+      return [bx + dx*(hb - inset) + (dz ? t*hb : 0), bz + dz*(hb - inset) + (dx ? t*hb : 0)];
+    };
+    // bollards guarding a corner
+    [[-1,-1],[1,-1],[-1,1],[1,1]].forEach(([sx, sz])=>{
+      if(P() > 0.45) return;
+      [[0.9, 0], [1.8, 0], [0, 0.9], [0, 1.8]].forEach(([ax, az])=>{
+        const x = bx + sx*(hb - 0.22 - ax), z = bz + sz*(hb - 0.22 - az);
+        if((ax || az) && ground(x, z, 0.17, 0.17, 1.0, 0.25)) put(x, 0, z, 0.17, 0.86, 0.17, 3, {tint:[0.10,0.11,0.10], shape:'bollard'});
+      });
+    });
+    // a street sign on one corner of the block
+    if(P() < 0.5){
+      const sx = P() < 0.5 ? -1 : 1, sz = P() < 0.5 ? -1 : 1;
+      const x = bx + sx*(hb - 0.35), z = bz + sz*(hb - 0.35);
+      if(ground(x, z, 0.3, 0.3, 3.0, 0.4)) put(x, 0, z, 1.10, 2.96, 1.10, 3, {tint:[1,1,1], shape:'sign', ry:(sx*sz > 0 ? 0 : Math.PI/2)});
+    }
+    // parking meters and a news box or two along the kerbs, a utility cabinet by one
+    for(let side=0; side<4; side++){
+      const [dx, dz] = FACES[side], ry = dx ? Math.PI/2*dx : (dz > 0 ? 0 : Math.PI);
+      if(P() < 0.45) for(let t=-0.7; t<=0.7; t+=0.35){
+        if(P() < 0.45) continue;
+        const [x, z] = kerb(side, t, 0.28);
+        if(ground(x, z, 0.2, 0.2, 1.4, 0.3)) put(x, 0, z, 0.2, 1.36, 0.2, 3, {tint:[1,1,1], shape:'meter', ry});
+      }
+      if(P() < 0.22){
+        const t = (P() - 0.5)*1.2, n2 = 1 + ((P()*2)|0);
+        for(let k=0;k<n2;k++){
+          const [x, z] = kerb(side, t, 0.38);
+          const xx = x + (dz ? k*0.6 : 0), zz = z + (dx ? k*0.6 : 0);            // side by side along the kerb
+          if(ground(xx, zz, 0.52, 0.5, 1.1, 0.1)) put(xx, 0, zz, dx ? 0.46 : 0.52, 1.0, dx ? 0.52 : 0.46, 3, {tint:pick(NEWS), shape:'newsbox', ry:ry + Math.PI});
+        }
+      }
+      if(P() < 0.14){
+        const [x, z] = kerb(side, (P() - 0.5)*1.3, 0.36);
+        const w = dx ? 0.45 : 0.95, d = dx ? 0.95 : 0.45;
+        if(ground(x, z, w, d, 1.3, 0.2)){
+          const c = pick(CAB);
+          put(x, 0, z, w, 1.18, d, 3, {tint:c});
+          put(x, 1.18, z, w + 0.06, 0.05, d + 0.06, 3, {tint:[c[0]*0.8, c[1]*0.8, c[2]*0.8]});
+        }
+      }
+    }
+  }
+  // ---- alleys: black bags heaped by the skip, a second bin, pipes down the walls
+  o.alleys.forEach(al=>{
+    const [kx, kz] = al.bin;
+    for(let k=0;k<5;k++){
+      const a = P()*Math.PI*2, r = 1.1 + P()*0.7;
+      const x = kx + Math.cos(a)*r*(al.alongX ? 1 : 0.35), z = kz + Math.sin(a)*r*(al.alongX ? 0.35 : 1);
+      const s = 0.45 + P()*0.25;
+      if(ground(x, z, s, s, s*0.8, 0.02)) put(x, 0, z, s, s*0.78, s*0.9, 3, {tint:[0.06,0.06,0.07], shape:'bag', ry:P()*3});
+    }
+    for(let k=0;k<2;k++){
+      const along = (P() - 0.5)*al.len*0.8, side = P() < 0.5 ? -1 : 1;
+      const x = al.x + (al.alongX ? along : side*(al.w/2 - 0.12)), z = al.z + (al.alongX ? side*(al.w/2 - 0.12) : along);
+      if(IX.free(x - 0.1, z - 0.1, x + 0.1, z + 0.1, 0.02, 3.8)) put(x, 0, z, 0.12, 4.0, 0.12, 3, {tint:[0.40,0.42,0.43], shape:'pole'});
+    }
+  });
+  // ---- the district wall: downpipes, meter boxes, bags at its foot and fire escapes up its face
+  {
+    const h = o.half - 1;
+    [[1, 0, -h], [0, 0, h], [3, -h, 0], [2, h, 0]].forEach(([fi, fx, fz])=>{
+      const [dx, dz] = FACES[fi];
+      for(let a=-h + 3; a<h - 3; a += 4 + P()*8){
+        const kind = P();
+        if(kind < 0.35){
+          faceBox(fi, fx, fz, a, 0.02, 0.16, 0, 0.14, 12.7, 3, {tint:[0.38,0.40,0.41], shape:'pole'});      // downpipe
+        } else if(kind < 0.60){
+          const x = fx + dx*0.12 + (dz ? a : 0), z = fz + dz*0.12 + (dx ? a : 0);
+          if(IX.free(x - 0.4, z - 0.4, x + 0.4, z + 0.4, 1.0, 2.0)) faceBox(fi, fx, fz, a, 0.0, 0.2, 1.2, 0.62, 0.78, 3, {tint:[0.58,0.60,0.60]});   // meter box
+        } else if(kind < 0.80){
+          for(let k=0;k<3;k++){
+            const s = 0.45 + P()*0.25, aa = a + (P() - 0.5)*1.4;
+            const x = fx + dx*(0.35 + P()*0.3) + (dz ? aa : 0), z = fz + dz*(0.35 + P()*0.3) + (dx ? aa : 0);
+            if(ground(x, z, s, s, s, 0.02)) put(x, 0, z, s, s*0.78, s*0.9, 3, {tint:[0.06,0.06,0.07], shape:'bag', ry:P()*3});
+          }
+        }
+      }
+      // fire escapes: landings just under the windows of each floor, a flight between each pair
+      for(let e=0, ne = 1 + ((P()*3)|0); e<ne; e++){
+        const L = 3.0, Dp = 1.1, a = (P() - 0.5)*(2*h - 12);
+        const lv = [3.94, 7.14, 10.34];
+        const p0 = [fx + dx*0.3 + (dz ? a - L/2 - 0.2 : 0), fz + dz*0.3 + (dx ? a - L/2 - 0.2 : 0)];
+        const p1 = [fx + dx*(Dp + 0.1) + (dz ? a + L/2 + 0.2 : 0), fz + dz*(Dp + 0.1) + (dx ? a + L/2 + 0.2 : 0)];
+        if(!IX.free(Math.min(p0[0], p1[0]), Math.min(p0[1], p1[1]), Math.max(p0[0], p1[0]), Math.max(p0[1], p1[1]), 1.4, 11.8)) continue;
+        lv.forEach((y, li)=>{
+          faceBox(fi, fx, fz, a, 0.02, Dp, y, L, 0.07, 3, {tint:IRON, style:18});
+          faceBox(fi, fx, fz, a, Dp - 0.06, Dp, y + 0.07, L, 1.0, 3, {tint:[1,1,1], shape:'rail'});
+          [-1, 1].forEach(sg=>faceBox(fi, fx, fz, a + sg*(L/2 - 0.03), 0.02, Dp - 0.06, y + 0.07, 0.06, 1.0, 3, {tint:[1,1,1], shape:'railS'}));
+          [-1, 1].forEach(sg=>faceBox(fi, fx, fz, a + sg*(L/2 - 0.25), 0.02, Dp*0.8, y - 0.42, 0.05, 0.42, 3, {tint:IRON}));
+          if(li < lv.length - 1)
+            faceBox(fi, fx, fz, a, Dp*0.40, Dp - 0.08, y + 0.07, 2.6, 3.2 + 0.9, 3, {tint:[1,1,1], shape:'flight', ry:li % 2 ? Math.PI : 0});
+        });
+        faceBox(fi, fx, fz, a + L/2 - 0.45, Dp - 0.30, Dp - 0.25, 1.64, 0.45, 2.3, 3, {tint:[1,1,1], shape:'ladder'});
+        faceBox(fi, fx, fz, a - L/2 + 0.45, 0.30, 0.35, 10.41, 0.45, 2.6, 3, {tint:[1,1,1], shape:'ladder'});
+      }
+    });
+  }
+  // ---- wires strung across the streets between facing buildings, and out to the district wall
+  {
+    const faces2 = [];
+    o.foot.forEach(f=>{
+      if(f.floors < 2) return;
+      const X0 = f.cx - (f.bw + 0.9)/2, X1 = f.cx + (f.bw + 0.9)/2, Z0 = f.cz - (f.bd + 0.9)/2, Z1 = f.cz + (f.bd + 0.9)/2;
+      faces2.push({axis:'x', at:X1, dir:1, lo:Z0, hi:Z1, top:f.storeyTop});
+      faces2.push({axis:'x', at:X0, dir:-1, lo:Z0, hi:Z1, top:f.storeyTop});
+      faces2.push({axis:'z', at:Z1, dir:1, lo:X0, hi:X1, top:f.storeyTop});
+      faces2.push({axis:'z', at:Z0, dir:-1, lo:X0, hi:X1, top:f.storeyTop});
+    });
+    const h = o.half - 1;
+    faces2.push({axis:'x', at:-h, dir:1, lo:-h, hi:h, top:12.9}, {axis:'x', at:h, dir:-1, lo:-h, hi:h, top:12.9},
+                {axis:'z', at:-h, dir:1, lo:-h, hi:h, top:12.9}, {axis:'z', at:h, dir:-1, lo:-h, hi:h, top:12.9});
+    let wires = 0;
+    for(let i=0;i<faces2.length && wires < 18;i++){
+      const A = faces2[i];
+      if(A.dir < 0) continue;
+      for(let j=0;j<faces2.length && wires < 18;j++){
+        const Bf = faces2[j];
+        if(Bf.axis !== A.axis || Bf.dir > 0) continue;
+        const gap = Bf.at - A.at, lo = Math.max(A.lo, Bf.lo) + 1.0, hi = Math.min(A.hi, Bf.hi) - 1.0;
+        if(gap < 4 || gap > 17 || hi <= lo || P() > 0.35) continue;
+        const top = Math.min(A.top, Bf.top) - 0.5;
+        if(top < 6.6) continue;
+        const c = lo + P()*(hi - lo), y = 6.2 + P()*(top - 6.2), sag = 0.25 + P()*0.4;
+        const n2 = 1 + ((P()*3)|0);
+        for(let k=0;k<n2;k++){
+          const cc = c + k*0.35, yy = y - k*0.18;
+          const mx = A.axis === 'x' ? (A.at + Bf.at)/2 : cc, mz = A.axis === 'x' ? cc : (A.at + Bf.at)/2;
+          const w = A.axis === 'x' ? gap : 0.03, d = A.axis === 'x' ? 0.03 : gap;
+          if(!IX.free(mx - w/2 + 0.2*(A.axis === 'x'), mz - d/2 + 0.2*(A.axis !== 'x'), mx + w/2 - 0.2*(A.axis === 'x'), mz + d/2 - 0.2*(A.axis !== 'x'), yy - sag - 0.1, yy + 0.1)) break;
+          put(mx, yy - sag, mz, w, sag + 0.02, d, 3, {tint:[1,1,1], shape:'wire'});
+        }
+        wires++;
+      }
+    }
+  }
+
+  // ---- the district wall is a terrace of buildings too: windows, a cornice along the top
+  {
+    const bld = o.buildings[0], h = o.half - 1, tint = stoneOf(bld);
+    [[1, 0, -h], [0, 0, h], [3, -h, 0], [2, h, 0]].forEach(([fi, fx, fz])=>{    // the inner faces look into the district
+      windowStone(bld, fi, fx, fz, -h, h, 3.2, 12.9, tint);
+      const along = 2*h;
+      onFace(fi, fx, fz, 0, 12.62, along, 0.26, 0.16, 0.04, 3, {tint});
+      onFace(fi, fx, fz, 0, 12.50, along, 0.08, 0.08, 0.04, 3, {tint:[tint[0]*0.9, tint[1]*0.9, tint[2]*0.9]});
+      onFace(fi, fx, fz, 0, 3.02, along, 0.16, 0.08, 0.04, 3, {tint});                       // a string course over the shops
+    });
+  }
+}
+
 // the knockback arena: a real island — grass on top, dirt under it, rock all the way down
 function arenaMap(){
   const s = [], lights = [], buildings = [];
@@ -740,6 +1152,35 @@ function arenaMap(){
     }
   });
 
+  // ---- small things in the grass: wildflowers, pebbles, mushrooms at the foot of the trees.
+  // Decoration only, on dice of its own, so the island itself is exactly as it was.
+  {
+    const Q = rng(4471);
+    const deco = (x,y,z,w,h,d,c,ex)=>{ const b = B(x,y,z,w,h,d,c,ex); b.deco = true; b.see = 1; b.noao = 1; s.push(b); return b; };
+    const onGrass = (x,z)=>have.has(key(Math.round(x/cell), Math.round(z/cell))) && Math.hypot(x,z) < R - 2.5;
+    const FLOWER = [[1.00,0.97,0.90],[0.98,0.84,0.22],[0.70,0.46,0.92],[0.96,0.42,0.54],[0.55,0.70,1.00]];
+    for(let k=0;k<90;k++){
+      const x = (Q()*2 - 1)*R, z = (Q()*2 - 1)*R;
+      if(!onGrass(x, z) || !clear(x, z, 0.9)) continue;
+      const col = FLOWER[(Q()*FLOWER.length)|0];
+      for(let n=0, nn = 4 + ((Q()*5)|0); n<nn; n++){
+        const sz = 0.07 + Q()*0.05;
+        deco(x + (Q() - 0.5)*1.1, TOP + 0.10 + Q()*0.12, z + (Q() - 0.5)*1.1, sz, sz*0.7, sz, 3, {tint:col, shape:'ball'});
+      }
+    }
+    for(let k=0;k<110;k++){
+      const x = (Q()*2 - 1)*R, z = (Q()*2 - 1)*R;
+      if(!onGrass(x, z) || !clear(x, z, 0.6)) continue;
+      const sz = 0.18 + Q()*0.30, g = 0.44 + Q()*0.12;
+      deco(x, TOP - 0.04, z, sz, sz*0.55, sz*(0.7 + Q()*0.4), 1, {tint:[g, g*0.96, g*0.90], ry:Q()*3, shape:'rock'});
+    }
+    s.filter(b=>b.shape === 'trunk').forEach(t=>{
+      for(let n=0, nn = (Q()*4)|0; n<nn; n++){
+        const a2 = Q()*6.28, d = 0.35 + Q()*0.6, sz = 0.10 + Q()*0.08;
+        deco(t.x + Math.cos(a2)*d, TOP, t.z + Math.sin(a2)*d, sz, sz*1.1, sz, 3, {tint:[0.88,0.82,0.72], shape:'vent'});
+      }
+    });
+  }
   return {name:'Skyfall', half:60, fogNear:30, boxes:s, buildings:buildings, spawns:spawns, lights:lights,
           grid:{first:0, pitch:1, block:1, n:0, inset:0}, ground:0x2a2f36,
           voidBelow:true, navY:TOP+0.05, spawnY:TOP+0.4,
