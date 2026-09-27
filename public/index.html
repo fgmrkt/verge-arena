@@ -247,8 +247,14 @@
 #safe.hidden{display:none}
 #safe i{display:block;height:3px;margin-top:.34rem;border-radius:2px;background:#8fd2ff;transition:width .1s linear}
   /* the optic is real geometry — this is only a soft focus vignette around it */
-  #scope{position:absolute;inset:0;display:none;
-    background:radial-gradient(circle at 50% 50%, transparent 26%, rgba(9,11,13,.30) 58%, rgba(9,11,13,.62) 88%)}
+  /* the scope: the view through the glass fills a circle, black all round it, a
+     dark rim where the tube ends, and a fine reticle on top */
+  #scope{position:absolute;inset:0;display:none;overflow:hidden;animation:scopeIn .14s ease-out}
+  @keyframes scopeIn{from{opacity:0}to{opacity:1}}
+  #scope .lens{position:absolute;left:50%;top:50%;width:94vmin;height:94vmin;transform:translate(-50%,-50%);
+    border-radius:50%;box-shadow:0 0 0 200vmax #040506, inset 0 0 5vmin 1.2vmin rgba(0,0,0,.9)}
+  #scope .reticle{position:absolute;inset:0;width:100%;height:100%}
+  #scope .hint{z-index:1}
   #scope .hint{position:absolute;left:50%;bottom:5%;transform:translateX(-50%);font-size:.74rem;color:rgba(242,240,234,.45)}
   #slots{display:flex;gap:.35rem;justify-content:flex-end;margin-top:.5rem}
   .slot{font-size:.72rem;padding:.2rem .45rem;color:rgba(242,240,234,.5);background:rgba(16,21,26,.4)}
@@ -379,7 +385,32 @@
   <div id="blood2"></div>
   <div id="low"></div>
   <div id="pulse"></div>
-  <div id="scope"><div class="hint">Hold Shift to steady</div></div>
+  <div id="scope">
+    <div class="lens">
+      <svg class="reticle" viewBox="-100 -100 200 200" aria-hidden="true">
+        <defs>
+          <radialGradient id="lensTint" r="0.5" cx="0.5" cy="0.5">
+            <stop offset="0.62" stop-color="#0a1a22" stop-opacity="0"/>
+            <stop offset="0.93" stop-color="#0a1a22" stop-opacity="0.35"/>
+            <stop offset="1" stop-color="#000" stop-opacity="0.9"/>
+          </radialGradient>
+        </defs>
+        <circle r="100" fill="url(#lensTint)"/>
+        <g stroke="#07090b" fill="none">
+          <path d="M-100 0H-58M58 0H100M0 -100V-58M0 58V100" stroke-width="2.6"/>
+          <path d="M-58 0H-3M3 0H58M0 -58V-3M0 3V58" stroke-width="0.45"/>
+        </g>
+        <g fill="#07090b">
+          <circle cx="-12" r="0.9"/><circle cx="-24" r="0.9"/><circle cx="-36" r="0.9"/><circle cx="-48" r="0.9"/>
+          <circle cx="12" r="0.9"/><circle cx="24" r="0.9"/><circle cx="36" r="0.9"/><circle cx="48" r="0.9"/>
+          <circle cy="12" r="0.9"/><circle cy="24" r="0.9"/><circle cy="36" r="0.9"/><circle cy="48" r="0.9"/>
+          <circle cy="-12" r="0.9"/><circle cy="-24" r="0.9"/><circle cy="-36" r="0.9"/><circle cy="-48" r="0.9"/>
+        </g>
+        <circle r="0.85" fill="#e23b57"/>
+      </svg>
+    </div>
+    <div class="hint">Hold Shift to steady</div>
+  </div>
   <div id="cross">
     <i class="h" id="cl"></i><i class="h" id="cr"></i>
     <i class="v" id="ct"></i><i class="v" id="cb"></i>
@@ -594,6 +625,8 @@ const S = {
 // Controls. Every action below can be moved to another key; the game never
 // looks at a raw key code, it asks which action a key belongs to.
 // ---------------------------------------------------------------------------
+const RUN_SPEED = 7.0;
+const BHOP_CAP = RUN_SPEED * 1.5;       // the fastest strafe-jumping can take you
 const BIND_ACTIONS = [
   {id:'fwd',     name:'Move forward',   def:'KeyW'},
   {id:'back',    name:'Move back',      def:'KeyS'},
@@ -3375,8 +3408,11 @@ function playerShoot(now){
   // Jumping is not a way to win a gunfight: with both feet off the ground the
   // gun sprays, aiming barely helps, and it takes a moment to settle on landing.
   const air = player.airSpread;
-  let sp = w.spread * (player.ads ? lerp(0.35, 0.92, air) : 1) * (moving?w.moveMult*0.5+0.5:1)
-         * (1 + air * 2.8) * (player.crouching && !player.sliding ? 0.72 : 1);
+  let sp = w.spread * (player.ads ? lerp(0.35, 1.0, air) : 1) * (moving?w.moveMult*0.5+0.5:1)
+         * (1 + air * 4.0) * (player.crouching && !player.sliding ? 0.72 : 1);
+  // and a floor under it, so even the sniper cannot thread a mid-air shot:
+  // fully airborne, every gun throws at least a three-degree cone
+  sp = Math.max(sp, air * 0.055);
   const eye = tmpA.set(player.pos.x, player.pos.y+player.eye, player.pos.z);
   const muz = muzzlePoint();
   dropSafe(player);                               // shooting gives up your spawn cover
@@ -3506,7 +3542,7 @@ function switchGun(i){
 }
 function exitADS(){
   player.ads = false;
-  if(scopeOn){ scopeOn=false; el('scope').style.display='none'; if(vm.current) vm.current.visible=true; }
+  if(scopeOn){ scopeOn=false; el('scope').style.display='none'; vm.group.visible = true; if(vm.current) vm.current.visible=true; }
 }
 
 /* ============================================================
@@ -4033,7 +4069,8 @@ function updateCrosshair(){
   const vis = scopeOn ? '0' : '1';
   if(_last.cross !== vis){ _last.cross = vis; ['cl','cr','ct','cb','dot'].forEach(k=>el(k).style.opacity=vis); }
   if(scopeOn) return;
-  const gap = 3.5 + 4 + w.spread*240 * (player.ads?0.3:1) * (moving?1.7:1) * (1 + player.airSpread*2.8) + crossPunch;
+  const gap = 3.5 + 4 + Math.max(w.spread*240 * (player.ads?0.3:1) * (moving?1.7:1) * (1 + player.airSpread*4.0),
+                                player.airSpread*0.055*240) + crossPunch;
   el('cl').style.transform = `translateX(${-gap}px)`;
   el('cr').style.transform = `translateX(${gap}px)`;
   el('ct').style.transform = `translateY(${-gap}px)`;
@@ -4565,7 +4602,7 @@ function updatePlayer(dt, now){
     player.eye = player.height - 0.16;
 
     // ---- ground and air movement ----
-    let speed = player.ads ? 3.4 : (player.crouching ? 3.0 : 7.0 * (curW().speedMul || 1));
+    let speed = player.ads ? 3.4 : (player.crouching ? 3.0 : RUN_SPEED * (curW().speedMul || 1));
     if(l>0.001){
       wx/=l; wz/=l;
       if(player.onGround && !player.sliding){
@@ -4580,6 +4617,13 @@ function updatePlayer(dt, now){
         const base = MODE().knock ? 0.40 : 1;
         const ctrl = (player.knockLock > 0 ? 0.12 : 1) * base;
         accelerate(player.vel, {x:wx,z:wz}, 1.35*ctrl, 62*ctrl, dt);
+        // Bunny hopping is allowed to beat running, but only by so much: strafe-jumping
+        // tops out at half again your run speed. Shoves in knockback are not capped.
+        if(!MODE().knock && player.knockLock <= 0){
+          const cap = BHOP_CAP * (curW().speedMul || 1);
+          const flat = Math.hypot(player.vel.x, player.vel.z);
+          if(flat > cap){ const k = cap/flat; player.vel.x *= k; player.vel.z *= k; }
+        }
       }
     }
     if(player.onGround){
@@ -4675,9 +4719,10 @@ function updatePlayer(dt, now){
   );
   camera.rotation.set(player.pitch + swayY, player.yaw + swayX, player.roll, 'YXZ');
 
-  const wantFov = S.fov * (player.ads ? w.adsFov : 1) + (player.sliding?7:0) + (speedNow>8.6?3:0);
+  const wantFov = scopeOn ? (w.scopeFov || 20)
+                          : S.fov * (player.ads ? w.adsFov : 1) + (player.sliding?7:0) + (speedNow>8.6?3:0);
   if(Math.abs(camera.fov-wantFov)>0.05){
-    camera.fov = lerp(camera.fov, wantFov, 1-Math.pow(0.0001,dt));
+    camera.fov = scopeOn ? wantFov : lerp(camera.fov, wantFov, 1-Math.pow(0.0001,dt));
     camera.updateProjectionMatrix();
   }
 
@@ -4701,11 +4746,9 @@ function updatePlayer(dt, now){
   }
   if(vm.current){
     const uu = vm.current.userData;
-    if(uu.lens){
-      if(scopeOn){ ensureScopeRT(); uu.lens.material = scopeLive; uu.reticle.material.opacity = 1; }
-      else { uu.lens.material = scopeGlassMat(); uu.reticle.material.opacity = 0; }
-    }
+    if(uu.lens){ uu.lens.material = scopeGlassMat(); uu.reticle.material.opacity = 0; }
   }
+  vm.group.visible = !scopeOn;                    // looking down the tube, the rifle is out of view
 
   // mouse lag: the gun trails the view a little when you whip the camera around
   vm.lagX = lerp(vm.lagX, clamp((player.yaw - vm.lastYaw)*2.2, -0.09, 0.09), 1-Math.pow(0.002,dt));
@@ -4914,7 +4957,7 @@ function frame(){
   }
 
   updateSun();
-  if(scopeOn && scopeRT && match.running){
+  if(false && scopeOn && scopeRT && match.running){     // superseded by the full-screen scope
     const zf = curW().scopeFov || 20;
     if(scopeCam.fov !== zf){ scopeCam.fov = zf; scopeCam.updateProjectionMatrix(); }
     scopeCam.position.copy(camera.position);
