@@ -1050,21 +1050,19 @@ float relief(vec3 N, vec3 Np){
 
 // Only the surfaces a mesh actually carries are compiled into its shader: a lamp post
 // never runs the window code, a tree never runs the car paint.
-function facadeMaterial(baseHex, night, moss, slab, ivy, styles){
+function facadeMaterial(baseHex, night, moss, slab, styles){
   const mat = new THREE.MeshLambertMaterial({color:baseHex, vertexColors:true});
   mat.extensions = {derivatives:true};
   const st = styles ? Array.from(styles).map(v=>Math.round(v)) : [0,1,2,3,4,5,6,7,8,9,10,11,12,13,14];
   let defs = st.map(v=>'#define S' + v + '\n').join('');
   if(st.some(v=>v >= 1 && v <= 4)) defs += '#define SB\n';
   if(slab) defs += '#define SLAB\n';
-  if(ivy) defs += '#define IVY\n';
   const key = 'facade|' + defs.replace(/\n/g, ' ');
   mat.customProgramCacheKey = ()=>key;
   mat.onBeforeCompile = sh => {
     sh.uniforms.uNight = {value: night};
     sh.uniforms.uMoss = {value: moss || 0};
     sh.uniforms.uSlab = {value: slab ? 1 : 0};
-    sh.uniforms.uIvy = {value: ivy ? 1 : 0};
     sh.uniforms.uTimeW = WATER_T;
     Object.assign(sh.uniforms, FACADE_U);
     sh.vertexShader = `
@@ -1085,7 +1083,7 @@ function facadeMaterial(baseHex, night, moss, slab, ivy, styles){
         vWp = wp.xyz; vFa = aFa; vFb = aFb; vLp = position; vLn = objectNormal;
       }`);
     sh.fragmentShader = defs + `
-      uniform float uNight; uniform float uMoss; uniform float uSlab; uniform float uIvy; uniform float uTimeW;
+      uniform float uNight; uniform float uMoss; uniform float uSlab; uniform float uTimeW;
       varying vec3 vWp; varying vec3 vNw; varying vec4 vFa; varying vec4 vFb; varying vec3 vLp; varying vec3 vLn;
       vec3 gEmis = vec3(0.0);
       ${GLSL_NOISE}
@@ -1378,30 +1376,6 @@ function facadeMaterial(baseHex, night, moss, slab, ivy, styles){
         col *= 1.0 - dirt*0.45*smoothstep(1.8, 0.0, v);
         col *= 1.0 - dirt*0.28*streak;
         col *= 1.0 - 0.10*step(v, 0.45);
-        // ivy has taken the odd older wall, climbing from the pavement in patches
-        #ifdef IVY
-        if(style < 2.5 && step(fract(seed*7.31 + 0.13), 0.16) > 0.5){
-          float reach = 0.6 + 2.8*fnoise(vec2(u*0.30, seed*9.0));
-          // leaves scattered on a jittered lattice: each pixel belongs to the nearest one,
-          // shaded its own way, with dark gaps where the leaves part
-          vec2 lq = vec2(u, v)*7.5;
-          vec2 lc = floor(lq), lf = fract(lq);
-          float best = 9.0, lh = 0.0;
-          for(int j=-1;j<=1;j++) for(int i=-1;i<=1;i++){
-            vec2 cc = lc + vec2(float(i), float(j));
-            vec2 dd = vec2(float(i), float(j)) + vec2(fh(cc + 3.1), fh(cc + 7.7))*0.8 - lf;
-            float d2 = dot(dd, dd);
-            if(d2 < best){ best = d2; lh = fh(cc + seed*13.0); }
-          }
-          float leafD = sqrt(best);
-          float edgeN = 0.55*(fnoise(vec2(u*1.9, v*1.9)) - 0.5) + 0.25*(lh - 0.5);
-          float ivy = step(v, reach + edgeN) * step(0.36, fnoise(vec2(u*0.42 + seed*3.0, 2.0)));
-          ivy *= mix(1.0, step(leafD, 0.62), smoothstep(reach - 0.5, reach + 0.2, v));    // leaves break up the top edge
-          vec3 leaf = vec3(0.13,0.25,0.08) * (0.55 + 0.75*lh) * (1.0 - 0.45*smoothstep(0.32, 0.62, leafD)*det(0.13));
-          leaf = mix(leaf, vec3(0.30,0.40,0.12), step(0.86, lh)*0.7);
-          col = mix(col, leaf, ivy);
-        }
-        #endif
         // style 4: a street wall. Its ground floor is split into bays, each one
         // plain, a roller shutter or a pasted poster.
         #ifdef S4
@@ -1950,8 +1924,7 @@ function buildWorld(def){
       return (b.style !== undefined) ? b.style : (ss !== undefined ? ss : (bp ? bp.style : (cs !== undefined ? cs : 0)));
     };
     const styles = new Set(list.map(styleOf));
-    const mat = facadeMaterial(def.palette[i], T.night, def.voidBelow ? 1 : 0, !def.voidBelow && i === 2 && !shape,
-                               !def.voidBelow && i === 0 && !shape, styles);
+    const mat = facadeMaterial(def.palette[i], T.night, def.voidBelow ? 1 : 0, !def.voidBelow && i === 2 && !shape, styles);
     if(shape && SHAPE_DOUBLE[shape]) mat.side = THREE.DoubleSide;
     const im = new THREE.InstancedMesh(geo, mat, list.length);
     list.forEach((b,k)=>{
@@ -2033,7 +2006,7 @@ function buildWorld(def){
           spots.push([x, top, z, 0.35 + rr()*0.45, 0.22 + rr()*0.30, rr()*6.3, rr()]);
         }
       });
-      const gm = facadeMaterial(def.palette[4], T.night, 1, false, false, [9]); gm.side = THREE.DoubleSide;
+      const gm = facadeMaterial(def.palette[4], T.night, 1, false, [9]); gm.side = THREE.DoubleSide;
       const geo = SH2.tuft[0].clone();
       const im = new THREE.InstancedMesh(geo, gm, spots.length);
       const fa = new Float32Array(spots.length*4), fb = new Float32Array(spots.length*4);
