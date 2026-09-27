@@ -61,10 +61,10 @@ const SKILL_NAMES = ['even','even','sharp'];
 
 // per-class bot weapon behaviour (kdmg is the shove used in knockback)
 const KIT = [
-  {cls:0, rof:1.15, dmg:1.50, pellets:1, spread:1.00, fall:[30,66], hold:18, near:8,  reach:52, kdmg:30, kpel:1, burst:5, rate:0.13,  kick:0.010},
-  {cls:1, rof:0.62, dmg:0.80, pellets:1, spread:1.15, fall:[18,40], hold:14, near:5,  reach:34, kdmg:15, kpel:1, burst:9, rate:0.075, kick:0.005},
-  {cls:2, rof:2.40, dmg:3.20, pellets:1, spread:0.55, fall:[150,200], hold:34, near:18, reach:70, kdmg:80, kpel:1, burst:1, rate:0.90, kick:0},
-  {cls:3, rof:1.90, dmg:0.72, pellets:4, spread:3.20, fall:[5,13],  hold:9,  near:3,  reach:18, kdmg:11, kpel:5, burst:3, rate:0.55,  kick:0.02}
+  {cls:0, rof:1.15, dmg:1.50, pellets:1, spread:1.00, fall:[30,66], hold:18, near:8,  reach:52, kdmg:30, kpel:1, burst:5, rate:0.13,  kick:0.010, mag:30, reload:2.4},
+  {cls:1, rof:0.62, dmg:0.80, pellets:1, spread:1.15, fall:[18,40], hold:14, near:5,  reach:34, kdmg:15, kpel:1, burst:9, rate:0.075, kick:0.005, mag:35, reload:2.5},
+  {cls:2, rof:2.40, dmg:3.20, pellets:1, spread:0.55, fall:[150,200], hold:34, near:18, reach:70, kdmg:80, kpel:1, burst:1, rate:0.90, kick:0, mag:5, reload:3.1},
+  {cls:3, rof:1.90, dmg:0.72, pellets:4, spread:3.20, fall:[5,13],  hold:9,  near:3,  reach:18, kdmg:11, kpel:5, burst:3, rate:0.55,  kick:0.02, mag:6,  reload:3.0}
 ];
 
 // weapon damage the server will accept from a client hit claim
@@ -245,9 +245,39 @@ class Room {
     e.vx = e.vy = e.vz = 0;
     e.hp = 100; e.alive = true; e.respawnAt = 0;
     e.lastHitBy = null; e.knockLock = 0; e.spawnedAt = now(); e.safeUntil = now() + SPAWN_SAFE;
+    e.ammo = undefined; e.reloadUntil = 0; e.cover = null; e.roam = null; e.path = null;
     e.yaw = Math.atan2(s[0], s[1]) + Math.PI;
     if(!this.mode.classes.includes(e.cls)) e.cls = this.mode.classes[0];
     if(!silent) this.broadcast({t:'spawn', id:e.id, x:e.x, y:e.y, z:e.z, cls:e.cls, safe:SPAWN_SAFE});
+  }
+
+  // Does this bot have somewhere to hide from that enemy? Looked up at most
+  // every second and a half, and remembered in between.
+  coverFor(b, foe, t){
+    if(t < (b.noCoverUntil || 0)) return null;
+    if(!b.cover || t > (b.coverAt || 0) + 1.5){
+      b.cover = this.coverNode(b, foe, 14); b.coverAt = t; b.path = null;
+    }
+    return b.cover;
+  }
+
+  // The nearest spot this enemy cannot see me from, and not towards them: where
+  // a bot goes to reload, or to break off a fight it is losing.
+  coverNode(b, foe, maxD){
+    const G = this.graph(), W = this.world, fe = this.eye(foe);
+    const here = Math.hypot(b.x-foe.x, b.z-foe.z);
+    let pick = null, pd = 1e9;
+    const ax = b.x - foe.x, az = b.z - foe.z, al = Math.hypot(ax, az) || 1;
+    G.nodes.forEach(n=>{
+      const d = Math.hypot(n.x-b.x, n.z-b.z);
+      if(d > (maxD || 14) || d >= pd) return;
+      if(Math.hypot(n.x-foe.x, n.z-foe.z) < here) return;                 // not towards them
+      // and not round the far side of them either: the way there has to lead away
+      if(d > 0.5 && (ax*(n.x-b.x) + az*(n.z-b.z)) / (al*d) < -0.15) return;
+      if(this.canSee(b, foe.x, fe, foe.z, n.x, (W.navY||0)+1.2, n.z, 80) > 0) return;
+      pd = d; pick = n;
+    });
+    return pick;
   }
 
   // ---- damage -----------------------------------------------------------
@@ -265,7 +295,10 @@ class Room {
     }
     if(attacker && attacker !== victim) victim.lastHitBy = attacker.id;
     victim.lastHurtAt = now();
-    if(victim.bot && attacker && attacker !== victim){ victim.threat = attacker.id; victim.threatAt = now(); }
+    if(victim.bot && attacker && attacker !== victim){
+      victim.threat = attacker.id; victim.threatAt = now();
+      victim.threatPos = {x:attacker.x, z:attacker.z};        // where the shooting came from
+    }
     victim.hp -= dmg;
     this.broadcast({t:'hurt', id:victim.id, hp:Math.max(0,Math.round(victim.hp)),
                     by: attacker ? attacker.id : 0, head: !!head});
@@ -280,6 +313,7 @@ class Room {
     victim.respawnAt = now() + 2.2;
     if(attacker && attacker !== victim){
       attacker.kills++;
+      if(attacker.bot){ attacker.roam = null; attacker.path = null; attacker.foe = null; }   // move off the spot
       attacker.hp = Math.min(100, attacker.hp + KILL_HEAL);
       this.broadcast({t:'heal', id:attacker.id, hp:Math.round(attacker.hp), amount:KILL_HEAL});
     }
@@ -513,6 +547,10 @@ class Room {
         if(o.id === b.threat && t - (b.threatAt||0) < 4) score *= 0.45;   // shoot back
         score *= 0.6 + 0.4 * (o.hp / 100);                                // finish the wounded
         if(cur && o === cur) score *= 0.8;                                // don't flip-flop
+        // spread out: someone already on them is a reason to look elsewhere
+        let taken = 0;
+        for(const m of this.bots) if(m !== b && m.alive && m.foe === o.id) taken++;
+        if(taken) score *= 1 + Math.min(taken, 2) * 0.5;
         if(score < bs){ bs = score; best = o; }
       }
       if(best && best !== cur){ b.aimErr = S.err0; b.seen = 0; }         // new target: aim starts rough
@@ -532,42 +570,49 @@ class Room {
     b.aimErr = visible ? S.errMin + (b.aimErr - S.errMin) * Math.exp(-dt / S.track)
                        : Math.min(S.err0, b.aimErr + dt*0.05);
 
+    // ---- ammunition: a magazine, and the sense to break off while filling it ----
+    if(b.ammo === undefined) b.ammo = K.mag;
+    if(b.reloadUntil && t >= b.reloadUntil){ b.reloadUntil = 0; b.ammo = K.mag; b.burst = 0; }
+    const reloading = !!b.reloadUntil;
+
     // ---- decide where to go ----
     const lowHp = !kn && b.hp < 38;
     if(lowHp && visible && !b.retreatUntil && dist > K.near*1.4 && Math.random() < dt*2) b.retreatUntil = t + 2.5 + Math.random()*1.5;
     if(b.retreatUntil && (t > b.retreatUntil || b.hp > 70)) b.retreatUntil = 0;
 
     let wx = 0, wz = 0, goal = null;
-    if(visible && !b.retreatUntil){
+    // reloading means staying out of the fight until the gun is full again, even once
+    // out of sight: no wandering back to where they were last seen with an empty gun
+    const hiding = !!b.retreatUntil || reloading;
+    const tooFar = visible && dist > K.fall[1] * 1.1;                    // out where the rounds do nothing
+    if(visible && !hiding){
       // in the fight: face them, hold this class's range, and never stand still
       const toF = Math.atan2(foe.x-b.x, foe.z-b.z);
       b.yaw = lerpAngle(b.yaw, toF, 1 - Math.pow(0.0005, dt));
       const hold = this.mode.skill === 'duel' ? K.hold * 0.55 : K.hold;
-      const want = dist > hold ? 1 : (dist < K.near ? -0.7 : 0);
+      let want = dist > hold ? 1 : (dist < K.near ? -0.7 : 0);
+      if(tooFar) want = 1.15;                                            // get inside useful range first
       b.strafeT = (b.strafeT || 0) - dt;
       if(b.strafeT <= 0){ b.strafe = Math.random() < 0.5 ? 1 : -1; b.strafeT = 0.35 + Math.random()*0.7; }
       wx = Math.sin(toF)*want + Math.sin(toF+Math.PI/2)*b.strafe*0.9;
       wz = Math.cos(toF)*want + Math.cos(toF+Math.PI/2)*b.strafe*0.9;
       // the odd hop mid-strafe, like a player dodging
       if(b.onGround && !kn && Math.random() < dt*0.35){ b.vy = 6.4; b.onGround = false; }
-    } else {
-      if(b.retreatUntil && foe){
-        // break line of sight: the nearest node the enemy cannot see
-        if(!b.cover || t > b.coverAt + 1.5){
-          const G = this.graph(), me = this.nearestNode(b.x, b.z);
-          let pick = -1, pd = 1e9;
-          const fe = this.eye(foe);
-          G.nodes.forEach((n,i)=>{
-            const d = Math.hypot(n.x-b.x, n.z-b.z);
-            if(d > 14 || d >= pd) return;
-            if(Math.hypot(n.x-foe.x, n.z-foe.z) < Math.hypot(b.x-foe.x, b.z-foe.z)) return;   // not towards them
-            if(this.canSee(b, foe.x, fe, foe.z, n.x, (W.navY||0)+1.2, n.z, 80) > 0) return;
-            pd = d; pick = i;
-          });
-          b.cover = pick >= 0 ? G.nodes[pick] : null; b.coverAt = t; b.path = null;
-        }
-        goal = b.cover;
+    } else if(hiding && foe && !this.coverFor(b, foe, t)){
+      // nowhere to hide: back away from them if they can see me, otherwise keep
+      // still and watch the way they will come
+      const away = Math.atan2(b.x - foe.x, b.z - foe.z);
+      if(visible){
+        // back off at an angle, so a wall behind means sliding along it, not pressing into it
+        wx = Math.sin(away)*0.8 + Math.sin(away + Math.PI/2)*b.strafe*0.6;
+        wz = Math.cos(away)*0.8 + Math.cos(away + Math.PI/2)*b.strafe*0.6;
       }
+      b.yaw = lerpAngle(b.yaw, Math.atan2(foe.x-b.x, foe.z-b.z), 1 - Math.pow(0.01, dt));
+    } else if(reloading && !foe){
+      // nobody about: finish the reload where I stand
+    } else {
+      if(hiding && foe) goal = b.cover;
+      if(!goal && b.threatPos && t - (b.threatAt||0) < 3.5) goal = b.threatPos;    // go and look
       if(!goal && b.hunt && t < b.hunt.until) goal = b.hunt;
       if(!goal && b.lastSeen && t - b.lastSeen.at < 4) goal = b.lastSeen;     // chase where they were
       if(!goal){
@@ -596,17 +641,24 @@ class Room {
         if(Math.hypot(n.x-b.x, n.z-b.z) < 1.3){ b.path.shift(); continue; }
         tx = n.x; tz = n.z; break;
       }
+      if(hiding && foe && Math.hypot(tx-foe.x, tz-foe.z) < Math.hypot(b.x-foe.x, b.z-foe.z) - 0.6){
+        // the way to cover runs back past them: give that cover up and back off instead
+        b.cover = null; b.noCoverUntil = t + 1.5;
+        tx = b.x + (b.x - foe.x); tz = b.z + (b.z - foe.z);
+      }
       const ang = Math.atan2(tx-b.x, tz-b.z);
       // look where they are going, or back at a threat they are running from
-      const lookAt = b.retreatUntil && foe ? Math.atan2(foe.x-b.x, foe.z-b.z) : ang;
+      const lookAt = hiding && foe ? Math.atan2(foe.x-b.x, foe.z-b.z) : ang;
       b.yaw = lerpAngle(b.yaw, lookAt, 1 - Math.pow(0.003, dt));
       wx = Math.sin(ang); wz = Math.cos(ang);
     }
 
     // ---- shooting ----
-    if(visible && foe && b.seen > S.react && t > b.nextFire){
+    if(visible && foe && b.seen > S.react && t > b.nextFire && !reloading && !tooFar){
       if(b.burst <= 0) b.burst = kn ? Math.ceil(K.burst*1.5) : K.burst;
       b.burst--;
+      b.ammo--;
+      if(b.ammo <= 0){ b.reloadUntil = t + K.reload; b.cover = null; }    // dry: go and fill it
       b.nextFire = t + (b.burst > 0 ? K.rate * rnd(0.88,1.15)
                                     : (kn ? 0.62*K.rof : S.rof*K.rof) * rnd(0.85,1.25));
       const pellets = kn ? K.kpel : K.pellets;
